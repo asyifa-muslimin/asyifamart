@@ -26,7 +26,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   
   // Login Form States
-  const [loginEmail, setLoginEmail] = useState('');
+  const [loginIdentifier, setLoginIdentifier] = useState('');
 
   // Register Form States
   const [regName, setRegName] = useState('');
@@ -37,8 +37,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginEmail.trim()) return;
-    await onLogin(loginEmail.trim());
+    if (!loginIdentifier.trim()) return;
+    await onLogin(loginIdentifier.trim());
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
@@ -163,14 +163,14 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       {authTab === 'login' ? (
         <form onSubmit={handleLoginSubmit} className="space-y-4">
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 mb-1">Email Pengguna</label>
+            <label className="block text-[10px] font-bold text-slate-400 mb-1">No. WhatsApp atau Email</label>
             <input
-              type="email"
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
+              type="text"
+              value={loginIdentifier}
+              onChange={(e) => setLoginIdentifier(e.target.value)}
               required
-              placeholder="Contoh: user@asyifamart.com"
-              className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-emerald-500 text-xs bg-slate-50"
+              placeholder="Contoh: 0812345... atau user@asyifamart.com"
+              className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-emerald-500 text-xs bg-slate-50 font-semibold"
             />
           </div>
           <button

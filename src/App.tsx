@@ -51,7 +51,7 @@ import { ProductDetailPage } from './components/ProductDetailPage';
 import { CartPage } from './components/CartPage';
 import { OrderHistory } from './components/OrderHistory';
 import { ProfilePage } from './components/ProfilePage';
-import { isVariantOfProduct, getProductId, getVariantProductId } from './utils';
+import { isVariantOfProduct, getProductId, getVariantProductId, safeSetLocalStorage } from './utils';
 import { AdminPanel } from './components/AdminPanel';
 
 export default function App() {
@@ -123,6 +123,8 @@ export default function App() {
   // PWA States & Installer
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState<boolean>(false);
+  const [isOfflineBackupActive, setIsOfflineBackupActive] = useState<boolean>(false);
+  const [lastBackupTime, setLastBackupTime] = useState<string | null>(localStorage.getItem('offline_backup_timestamp'));
 
   const handleInstallApp = async () => {
     if (!deferredPrompt) return;
@@ -299,7 +301,7 @@ export default function App() {
   // Sync / Load data
   useEffect(() => {
     syncData();
-  }, [useLocalEmulation]);
+  }, [useLocalEmulation, isOnline]);
 
   // Load orders when user changes or DB mode changes
   useEffect(() => {
@@ -308,7 +310,7 @@ export default function App() {
     } else {
       setOrders([]);
     }
-  }, [currentUser, useLocalEmulation]);
+  }, [currentUser, useLocalEmulation, isOnline, isOfflineBackupActive]);
 
   // Realtime subscription setup
   useEffect(() => {
@@ -356,20 +358,28 @@ export default function App() {
       const { data: settings } = await supabase.from('store_settings').select('*');
       if (settings && settings.length > 0) {
         setStoreSettings(settings[0]);
+        safeSetLocalStorage('emulated_store_settings', settings);
       } else {
         const { error: seedErr } = await supabase.from('store_settings').insert(defaultStoreSettings);
-        if (!seedErr) setStoreSettings(defaultStoreSettings);
+        if (!seedErr) {
+          setStoreSettings(defaultStoreSettings);
+          safeSetLocalStorage('emulated_store_settings', [defaultStoreSettings]);
+        }
       }
 
       // 2. Fetch categories
       let { data: cats } = await supabase.from('categories').select('*');
       if (cats && cats.length > 0) {
         setCategories(cats);
+        safeSetLocalStorage('emulated_categories', cats);
       } else {
         const { error: seedErr } = await supabase.from('categories').insert(defaultCategories);
         if (!seedErr) {
           const { data: refetched } = await supabase.from('categories').select('*');
-          if (refetched) setCategories(refetched);
+          if (refetched) {
+            setCategories(refetched);
+            safeSetLocalStorage('emulated_categories', refetched);
+          }
         }
       }
 
@@ -377,11 +387,15 @@ export default function App() {
       let { data: prods } = await supabase.from('products').select('*');
       if (prods && prods.length > 0) {
         setProducts(prods);
+        safeSetLocalStorage('emulated_products', prods);
       } else {
         const { error: seedErr } = await supabase.from('products').insert(defaultProducts);
         if (!seedErr) {
           const { data: refetched } = await supabase.from('products').select('*');
-          if (refetched) setProducts(refetched);
+          if (refetched) {
+            setProducts(refetched);
+            safeSetLocalStorage('emulated_products', refetched);
+          }
         }
       }
 
@@ -389,11 +403,15 @@ export default function App() {
       let { data: vars } = await supabase.from('product_variants').select('*');
       if (vars && vars.length > 0) {
         setVariants(vars);
+        safeSetLocalStorage('emulated_product_variants', vars);
       } else {
         const { error: seedErr } = await supabase.from('product_variants').insert(defaultVariants);
         if (!seedErr) {
           const { data: refetched } = await supabase.from('product_variants').select('*');
-          if (refetched) setVariants(refetched);
+          if (refetched) {
+            setVariants(refetched);
+            safeSetLocalStorage('emulated_product_variants', refetched);
+          }
         }
       }
 
@@ -401,11 +419,15 @@ export default function App() {
       let { data: bans } = await supabase.from('banners').select('*');
       if (bans && bans.length > 0) {
         setBanners(bans);
+        safeSetLocalStorage('emulated_banners', bans);
       } else {
         const { error: seedErr } = await supabase.from('banners').insert(defaultBanners);
         if (!seedErr) {
           const { data: refetched } = await supabase.from('banners').select('*');
-          if (refetched) setBanners(refetched);
+          if (refetched) {
+            setBanners(refetched);
+            safeSetLocalStorage('emulated_banners', refetched);
+          }
         }
       }
 
@@ -413,19 +435,23 @@ export default function App() {
       let { data: prms } = await supabase.from('promos').select('*');
       if (prms && prms.length > 0) {
         setPromos(prms);
+        safeSetLocalStorage('emulated_promos', prms);
       } else {
-        const { error: seedErr } = await supabase.from('promos').insert(defaultPromos);
-        if (!seedErr) {
-          const { data: refetched } = await supabase.from('promos').select('*');
-          if (refetched) setPromos(refetched);
-        }
+        setPromos([]);
+        safeSetLocalStorage('emulated_promos', []);
       }
+
+      const nowStr = new Date().toLocaleString('id-ID');
+      safeSetLocalStorage('offline_backup_timestamp', nowStr);
+      setLastBackupTime(nowStr);
+      setIsOfflineBackupActive(false);
 
       if (currentUser) {
         loadUserOrders();
       }
     } catch (err) {
       console.warn('Silent sync failed:', err);
+      throw err; // throw to let syncData handle backup fallback
     }
   };
 
@@ -464,13 +490,54 @@ export default function App() {
       await silentSync();
     } catch (error) {
       console.error('Connection to live Supabase failed.', error);
-      showToast('Gagal menyambung ke live cloud database.', 'warning');
+      
+      // Fallback automatically to Offline Backup Local Storage!
+      const cachedSettings = localStorage.getItem('emulated_store_settings');
+      const cachedCategories = localStorage.getItem('emulated_categories');
+      const cachedProducts = localStorage.getItem('emulated_products');
+      const cachedVariants = localStorage.getItem('emulated_product_variants');
+      const cachedBanners = localStorage.getItem('emulated_banners');
+      const cachedPromos = localStorage.getItem('emulated_promos');
+
+      if (cachedSettings || cachedCategories || cachedProducts || cachedVariants) {
+        if (cachedSettings) setStoreSettings(JSON.parse(cachedSettings)[0]);
+        else setStoreSettings(defaultStoreSettings);
+
+        if (cachedCategories) setCategories(JSON.parse(cachedCategories));
+        else setCategories(defaultCategories);
+
+        if (cachedProducts) setProducts(JSON.parse(cachedProducts));
+        else setProducts(defaultProducts);
+
+        if (cachedVariants) setVariants(JSON.parse(cachedVariants));
+        else setVariants(defaultVariants);
+
+        if (cachedBanners) setBanners(JSON.parse(cachedBanners));
+        else setBanners(defaultBanners);
+
+        if (cachedPromos) setPromos(JSON.parse(cachedPromos));
+        else setPromos(defaultPromos);
+        
+        setIsOfflineBackupActive(true);
+        const timestamp = localStorage.getItem('offline_backup_timestamp') || 'Beberapa saat lalu';
+        showToast(`Offline: Database dimuat dari Backup Lokal (${timestamp})`, 'info');
+      } else {
+        // Fallback to absolute defaults so the page is never empty and prices aren't 0
+        setStoreSettings(defaultStoreSettings);
+        setCategories(defaultCategories);
+        setProducts(defaultProducts);
+        setVariants(defaultVariants);
+        setBanners(defaultBanners);
+        setPromos(defaultPromos);
+        setIsOfflineBackupActive(true);
+        showToast('Koneksi terputus. Menggunakan data bawaan toko.', 'warning');
+      }
     }
   };
 
   const loadUserOrders = async () => {
     if (!currentUser) return;
-    if (useLocalEmulation) {
+    if (useLocalEmulation || isOfflineBackupActive) {
       const cachedOrders = localStorage.getItem('emulated_orders') || '[]';
       const parsed = JSON.parse(cachedOrders) as Order[];
       if (currentUser.role === 'admin') {
@@ -486,9 +553,19 @@ export default function App() {
         query = query.eq('user_id', currentUser.id);
       }
       const { data } = await query;
-      if (data) setOrders(data);
+      if (data) {
+        setOrders(data);
+        localStorage.setItem('emulated_orders', JSON.stringify(data));
+      }
     } catch (err) {
-      console.error(err);
+      console.error('Failed to load live orders, using offline order fallback:', err);
+      const cachedOrders = localStorage.getItem('emulated_orders') || '[]';
+      const parsed = JSON.parse(cachedOrders) as Order[];
+      if (currentUser.role === 'admin') {
+        setOrders(parsed);
+      } else {
+        setOrders(parsed.filter((o) => o.user_id === currentUser.id));
+      }
     }
   };
 
@@ -743,16 +820,17 @@ Catatan: ${checkoutData.catatan}
     setCurrentPage('home');
   };
 
-  const handleLogin = async (email: string) => {
+  const handleLogin = async (identifier: string) => {
+    const isEmail = identifier.includes('@');
     if (useLocalEmulation) {
       // Offline local auth
       const mockUser: User = {
         id: 'emulated-user-123',
-        nama: email.split('@')[0],
-        email: email,
-        whatsapp: '081234567890',
+        nama: isEmail ? identifier.split('@')[0] : `User-${identifier}`,
+        email: isEmail ? identifier : `user-${identifier}@asyifamart.com`,
+        whatsapp: isEmail ? '081234567890' : identifier,
         alamat: 'Alamat Emulasi Lokal',
-        role: email.toLowerCase() === 'admin@asyifamart.com' ? 'admin' : 'pelanggan',
+        role: identifier.toLowerCase() === 'admin@asyifamart.com' ? 'admin' : 'pelanggan',
         created_at: new Date().toISOString(),
       };
       setCurrentUser(mockUser);
@@ -762,7 +840,22 @@ Catatan: ${checkoutData.catatan}
     }
 
     try {
-      const { data, error } = await supabase.from('users').select('*').eq('email', email);
+      const identifierLower = identifier.toLowerCase().trim();
+      let orFilter = `email.eq.${identifierLower},whatsapp.eq.${identifier}`;
+      const cleanPhone = identifier.replace(/[^0-9]/g, '');
+      if (cleanPhone) {
+        orFilter += `,whatsapp.eq.${cleanPhone}`;
+        if (cleanPhone.startsWith('0')) {
+          orFilter += `,whatsapp.eq.62${cleanPhone.slice(1)}`;
+        } else if (cleanPhone.startsWith('62')) {
+          orFilter += `,whatsapp.eq.0${cleanPhone.slice(2)}`;
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .or(orFilter);
       if (error) throw error;
 
       if (data && data.length > 0) {
@@ -772,7 +865,7 @@ Catatan: ${checkoutData.catatan}
         if (data[0].role === 'admin') navigate('admin');
         else navigate('home');
       } else {
-        showToast('Email belum terdaftar. Silakan pilih tab Daftar untuk mendaftar.', 'warning');
+        showToast('Akun tidak ditemukan. Silakan periksa No. WhatsApp / Email Anda atau pilih tab Daftar.', 'warning');
       }
     } catch (err: any) {
       showToast(`Masuk gagal: ${err.message}`, 'error');
@@ -849,7 +942,7 @@ Catatan: ${checkoutData.catatan}
 
   const handleSaveStoreSettings = async (settings: StoreSettings) => {
     if (useLocalEmulation) {
-      localStorage.setItem('emulated_store_settings', JSON.stringify([settings]));
+      safeSetLocalStorage('emulated_store_settings', [settings]);
       setStoreSettings(settings);
       showToast('Konfigurasi toko berhasil disimpan secara lokal!', 'success');
       return;
@@ -876,7 +969,7 @@ Catatan: ${checkoutData.catatan}
         const updated = categories.map((c) =>
           c.id === cat.id ? { ...c, nama_kategori: cat.nama_kategori, slug, icon: cat.icon } : c
         );
-        localStorage.setItem('emulated_categories', JSON.stringify(updated));
+        safeSetLocalStorage('emulated_categories', updated);
         setCategories(updated);
         showToast('Kategori diperbarui secara lokal!', 'success');
         return;
@@ -901,7 +994,7 @@ Catatan: ${checkoutData.catatan}
       const newId = Math.floor(Date.now() + Math.random() * 100000);
       if (useLocalEmulation) {
         const updated = [...categories, { id: newId, nama_kategori: cat.nama_kategori, slug, icon: cat.icon }];
-        localStorage.setItem('emulated_categories', JSON.stringify(updated));
+        safeSetLocalStorage('emulated_categories', updated);
         setCategories(updated);
         showToast('Kategori baru ditambahkan secara lokal!', 'success');
         return;
@@ -926,7 +1019,7 @@ Catatan: ${checkoutData.catatan}
     showConfirm('Hapus Kategori', 'Yakin ingin menghapus kategori produk ini?', async () => {
       if (useLocalEmulation) {
         const updated = categories.filter((c) => c.id !== id);
-        localStorage.setItem('emulated_categories', JSON.stringify(updated));
+        safeSetLocalStorage('emulated_categories', updated);
         setCategories(updated);
         showToast('Kategori dihapus secara lokal.', 'success');
         return;
@@ -1007,8 +1100,8 @@ Catatan: ${checkoutData.catatan}
 
       const finalVariants = [...allEmulatedVars, ...mappedVars];
 
-      localStorage.setItem('emulated_products', JSON.stringify(updatedProducts));
-      localStorage.setItem('emulated_product_variants', JSON.stringify(finalVariants));
+      safeSetLocalStorage('emulated_products', updatedProducts);
+      safeSetLocalStorage('emulated_product_variants', finalVariants);
 
       setProducts(updatedProducts);
       setVariants(finalVariants);
@@ -1076,8 +1169,8 @@ Catatan: ${checkoutData.catatan}
         let updatedVars = JSON.parse(localStorage.getItem('emulated_product_variants') || '[]') as ProductVariant[];
         updatedVars = updatedVars.filter((v) => v.product_id !== id);
 
-        localStorage.setItem('emulated_products', JSON.stringify(updatedProds));
-        localStorage.setItem('emulated_product_variants', JSON.stringify(updatedVars));
+        safeSetLocalStorage('emulated_products', updatedProds);
+        safeSetLocalStorage('emulated_product_variants', updatedVars);
 
         setProducts(updatedProds);
         setVariants(updatedVars);
@@ -1354,10 +1447,14 @@ self.addEventListener('fetch', event => {
               <span className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider flex items-center gap-1 mt-0.5">
                 <span
                   className={`w-2 h-2 rounded-full inline-block animate-pulse ${
-                    isOnline ? 'bg-emerald-500' : 'bg-amber-500'
+                    isOfflineBackupActive ? 'bg-indigo-500' : isOnline ? 'bg-emerald-500' : 'bg-amber-500'
                   }`}
                 ></span>
-                <span>Belanja Mudah dan Hemat</span>
+                <span>
+                  {isOfflineBackupActive
+                    ? `Mode Luring (Backup: ${lastBackupTime || 'Aktif'})`
+                    : 'Belanja Mudah dan Hemat'}
+                </span>
               </span>
             </div>
           </div>
