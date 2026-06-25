@@ -1,0 +1,6 @@
+{
+  "name": "Asyifa Mart",
+  "description": "Toko Kelontong Online Terpercaya - Belanja Mudah & Hemat dengan Sinkronisasi Realtime PWA",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
