@@ -455,80 +455,65 @@ export default function App() {
     }
   };
 
+  // Baca cache localStorage (jika ada) dan tampilkan ke state.
+  // Mengembalikan true jika ada minimal satu cache yang ditemukan, false jika benar-benar kosong (lalu pakai default).
+  const loadFromCacheOrDefaults = (): boolean => {
+    const cachedSettings = localStorage.getItem('emulated_store_settings');
+    const cachedCategories = localStorage.getItem('emulated_categories');
+    const cachedProducts = localStorage.getItem('emulated_products');
+    const cachedVariants = localStorage.getItem('emulated_product_variants');
+    const cachedBanners = localStorage.getItem('emulated_banners');
+    const cachedPromos = localStorage.getItem('emulated_promos');
+
+    const hasCache = !!(cachedSettings || cachedCategories || cachedProducts || cachedVariants);
+
+    if (cachedSettings) setStoreSettings(JSON.parse(cachedSettings)[0]);
+    else setStoreSettings(defaultStoreSettings);
+
+    if (cachedCategories) setCategories(JSON.parse(cachedCategories));
+    else setCategories(defaultCategories);
+
+    if (cachedProducts) setProducts(JSON.parse(cachedProducts));
+    else setProducts(defaultProducts);
+
+    if (cachedVariants) setVariants(JSON.parse(cachedVariants));
+    else setVariants(defaultVariants);
+
+    if (cachedBanners) setBanners(JSON.parse(cachedBanners));
+    else setBanners(defaultBanners);
+
+    if (cachedPromos) setPromos(JSON.parse(cachedPromos));
+    else setPromos(defaultPromos);
+
+    return hasCache;
+  };
+
+  // Cache-first + stale-while-revalidate:
+  // 1. Tampilkan cache (atau default) duluan supaya UI langsung terisi tanpa menunggu network.
+  // 2. Tetap coba sync ke Supabase di belakang layar; kalau berhasil, tampilan & cache ter-update otomatis (lihat silentSync()).
+  // 3. Kalau sync gagal, cache/default yang sudah tampil di langkah 1 tetap dipakai sebagai fallback.
   const syncData = async () => {
     if (useLocalEmulation) {
-      // Load offline emulation cache or defaults
-      const cachedSettings = localStorage.getItem('emulated_store_settings');
-      const cachedCategories = localStorage.getItem('emulated_categories');
-      const cachedProducts = localStorage.getItem('emulated_products');
-      const cachedVariants = localStorage.getItem('emulated_product_variants');
-      const cachedBanners = localStorage.getItem('emulated_banners');
-      const cachedPromos = localStorage.getItem('emulated_promos');
-
-      if (cachedSettings) setStoreSettings(JSON.parse(cachedSettings)[0]);
-      else setStoreSettings(defaultStoreSettings);
-
-      if (cachedCategories) setCategories(JSON.parse(cachedCategories));
-      else setCategories(defaultCategories);
-
-      if (cachedProducts) setProducts(JSON.parse(cachedProducts));
-      else setProducts(defaultProducts);
-
-      if (cachedVariants) setVariants(JSON.parse(cachedVariants));
-      else setVariants(defaultVariants);
-
-      if (cachedBanners) setBanners(JSON.parse(cachedBanners));
-      else setBanners(defaultBanners);
-
-      if (cachedPromos) setPromos(JSON.parse(cachedPromos));
-      else setPromos(defaultPromos);
-
+      // Mode emulasi offline murni: tidak ada Supabase sama sekali, cukup cache/default.
+      loadFromCacheOrDefaults();
       return;
     }
 
+    // Langkah 1: tampilkan cache/default dulu secepat mungkin.
+    const hadCache = loadFromCacheOrDefaults();
+
+    // Langkah 2: revalidate ke Supabase di belakang layar.
     try {
       await silentSync();
     } catch (error) {
       console.error('Connection to live Supabase failed.', error);
-      
-      // Fallback automatically to Offline Backup Local Storage!
-      const cachedSettings = localStorage.getItem('emulated_store_settings');
-      const cachedCategories = localStorage.getItem('emulated_categories');
-      const cachedProducts = localStorage.getItem('emulated_products');
-      const cachedVariants = localStorage.getItem('emulated_product_variants');
-      const cachedBanners = localStorage.getItem('emulated_banners');
-      const cachedPromos = localStorage.getItem('emulated_promos');
 
-      if (cachedSettings || cachedCategories || cachedProducts || cachedVariants) {
-        if (cachedSettings) setStoreSettings(JSON.parse(cachedSettings)[0]);
-        else setStoreSettings(defaultStoreSettings);
-
-        if (cachedCategories) setCategories(JSON.parse(cachedCategories));
-        else setCategories(defaultCategories);
-
-        if (cachedProducts) setProducts(JSON.parse(cachedProducts));
-        else setProducts(defaultProducts);
-
-        if (cachedVariants) setVariants(JSON.parse(cachedVariants));
-        else setVariants(defaultVariants);
-
-        if (cachedBanners) setBanners(JSON.parse(cachedBanners));
-        else setBanners(defaultBanners);
-
-        if (cachedPromos) setPromos(JSON.parse(cachedPromos));
-        else setPromos(defaultPromos);
-        
+      // Langkah 3: data dari langkah 1 sudah tampil di UI, cukup beri tahu pengguna statusnya.
+      if (hadCache) {
         setIsOfflineBackupActive(true);
         const timestamp = localStorage.getItem('offline_backup_timestamp') || 'Beberapa saat lalu';
         showToast(`Offline: Database dimuat dari Backup Lokal (${timestamp})`, 'info');
       } else {
-        // Fallback to absolute defaults so the page is never empty and prices aren't 0
-        setStoreSettings(defaultStoreSettings);
-        setCategories(defaultCategories);
-        setProducts(defaultProducts);
-        setVariants(defaultVariants);
-        setBanners(defaultBanners);
-        setPromos(defaultPromos);
         setIsOfflineBackupActive(true);
         showToast('Koneksi terputus. Menggunakan data bawaan toko.', 'warning');
       }
