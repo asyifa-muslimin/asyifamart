@@ -45,6 +45,14 @@ import {
   defaultBanners,
   defaultPromos,
 } from './seedData';
+import {
+  seedCacheStoreSettings,
+  seedCacheCategories,
+  seedCacheProducts,
+  seedCacheVariants,
+  seedCacheBanners,
+  seedCachePromos,
+} from './seedCache';
 import { ProductCard } from './components/ProductCard';
 import { WishlistPage } from './components/WishlistPage';
 import { ProductDetailPage } from './components/ProductDetailPage';
@@ -456,7 +464,7 @@ export default function App() {
   };
 
   // Baca cache localStorage (jika ada) dan tampilkan ke state.
-  // Mengembalikan true jika ada minimal satu cache yang ditemukan, false jika benar-benar kosong (lalu pakai default).
+  // Mengembalikan true jika ada minimal satu cache yang ditemukan, false jika benar-benar kosong (lalu pakai seed dari backup).
   const loadFromCacheOrDefaults = (): boolean => {
     const cachedSettings = localStorage.getItem('emulated_store_settings');
     const cachedCategories = localStorage.getItem('emulated_categories');
@@ -467,23 +475,26 @@ export default function App() {
 
     const hasCache = !!(cachedSettings || cachedCategories || cachedProducts || cachedVariants);
 
+    // Catatan: kalau belum ada cache sama sekali (pertama kali app dibuka di perangkat ini),
+    // pakai data asli dari backup cloud (seedCache.ts) sebagai tampilan awal, bukan defaultProducts
+    // contoh dari seedData.ts. Ini membuat katalog langsung terisi penuh sebelum sempat sync ke Supabase.
     if (cachedSettings) setStoreSettings(JSON.parse(cachedSettings)[0]);
-    else setStoreSettings(defaultStoreSettings);
+    else setStoreSettings(seedCacheStoreSettings || defaultStoreSettings);
 
     if (cachedCategories) setCategories(JSON.parse(cachedCategories));
-    else setCategories(defaultCategories);
+    else setCategories(seedCacheCategories.length > 0 ? seedCacheCategories : defaultCategories);
 
     if (cachedProducts) setProducts(JSON.parse(cachedProducts));
-    else setProducts(defaultProducts);
+    else setProducts(seedCacheProducts.length > 0 ? seedCacheProducts : defaultProducts);
 
     if (cachedVariants) setVariants(JSON.parse(cachedVariants));
-    else setVariants(defaultVariants);
+    else setVariants(seedCacheVariants.length > 0 ? seedCacheVariants : defaultVariants);
 
     if (cachedBanners) setBanners(JSON.parse(cachedBanners));
-    else setBanners(defaultBanners);
+    else setBanners(seedCacheBanners.length > 0 ? seedCacheBanners : defaultBanners);
 
     if (cachedPromos) setPromos(JSON.parse(cachedPromos));
-    else setPromos(defaultPromos);
+    else setPromos(seedCachePromos.length > 0 ? seedCachePromos : defaultPromos);
 
     return hasCache;
   };
