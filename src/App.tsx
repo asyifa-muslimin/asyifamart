@@ -61,6 +61,8 @@ import { OrderHistory } from './components/OrderHistory';
 import { ProfilePage } from './components/ProfilePage';
 import { isVariantOfProduct, getProductId, getVariantProductId, safeSetLocalStorage } from './utils';
 import { AdminPanel } from './components/AdminPanel';
+import { buildReceiptEscPos } from './printer/escpos';
+import { printRawEscPos, isQzConnected } from './printer/qzTray';
 
 export default function App() {
   // Navigation & Page State
@@ -91,6 +93,11 @@ export default function App() {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => {
     return 'Notification' in window ? Notification.permission : 'default';
   });
+
+  // Thermal Printer (QZ Tray) States
+  const [qzPrinterStatus, setQzPrinterStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const [autoPrintOrderIds, setAutoPrintOrderIds] = useState<Set<number>>(new Set());
+
 
   // Search, Sort, Filter States
   const [searchTerm, setSearchTerm] = useState('');
@@ -341,6 +348,34 @@ export default function App() {
       supabase.removeChannel(channel);
     };
   }, [useLocalEmulation]);
+
+  // Auto-print struk thermal saat pesanan baru masuk (khusus admin, hanya kalau diaktifkan).
+  // Terpisah dari channel 'schema-changes' di atas supaya fokus 1 event spesifik
+  // (INSERT pada tabel orders) dan tidak ikut terpicu oleh perubahan tabel lain.
+  useEffect(() => {
+    if (useLocalEmulation) return;
+    if (!currentUser || currentUser.role !== 'admin') return;
+    if (!storeSettings.printer_auto_print_aktif) return;
+    if (!storeSettings.printer_thermal_nama) return;
+
+    const orderChannel = supabase
+      .channel('orders-auto-print')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'orders' },
+        async (payload) => {
+          const newOrderRow = payload.new as Order;
+          if (!newOrderRow || !newOrderRow.id) return;
+
+          await autoPrintIncomingOrder(newOrderRow);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(orderChannel);
+    };
+  }, [useLocalEmulation, currentUser, storeSettings.printer_auto_print_aktif, storeSettings.printer_thermal_nama]);
 
   // Helper to trigger toast
   const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
@@ -1208,6 +1243,81 @@ Catatan: ${checkoutData.catatan}
     }
   };
 
+  // Dipanggil otomatis lewat realtime listener saat ada baris baru di tabel `orders`.
+  // Mengambil rincian item, menyusun struk ESC/POS, lalu mengirimnya ke printer
+  // thermal yang dipilih admin di Pengaturan Printer (lewat QZ Tray).
+  // Helper bersama: ubah baris mentah tabel order_items (dari Supabase) jadi
+  // bentuk siap-tampil { nama_produk, nama_varian, qty, harga } dengan melihat
+  // nama produk/varian terbaru dari state products/variants saat ini.
+  const mapOrderItemRows = (rows: any[]): NonNullable<Order['items']> => {
+    return (rows || []).map((item: any) => {
+      const variant = variants.find((v) => v.id === item.variant_id);
+      const prod = variant ? products.find((p) => isVariantOfProduct(variant, p)) : null;
+      return {
+        id: item.id,
+        nama_produk: prod ? prod.nama_produk : 'Produk',
+        nama_varian: variant ? variant.nama_varian : 'Varian',
+        qty: item.qty,
+        harga: item.harga,
+      };
+    });
+  };
+
+  // Dipakai oleh halaman Riwayat Pesanan konsumen untuk memuat rincian produk
+  // satu pesanan saat kartunya di-expand (lazy-load, tidak mengubah object
+  // order yang ada di state `orders`, cukup mengembalikan array item-nya).
+  const handleFetchOrderItemsForDisplay = async (orderId: number): Promise<NonNullable<Order['items']>> => {
+    const existing = orders.find((o) => o.id === orderId);
+    if (existing?.items && existing.items.length > 0) {
+      return existing.items;
+    }
+
+    if (useLocalEmulation || isOfflineBackupActive) {
+      const cachedOrders = JSON.parse(localStorage.getItem('emulated_orders') || '[]') as Order[];
+      const found = cachedOrders.find((o) => o.id === orderId);
+      return found?.items || [];
+    }
+
+    const { data, error } = await supabase
+      .from('order_items')
+      .select('*')
+      .eq('order_id', orderId);
+
+    if (error) throw error;
+    return mapOrderItemRows(data || []);
+  };
+
+  const autoPrintIncomingOrder = async (newOrderRow: Order) => {
+    // Cegah cetak ganda kalau event realtime sama terkirim ulang oleh Supabase.
+    if (autoPrintOrderIds.has(newOrderRow.id)) return;
+    setAutoPrintOrderIds((prev) => new Set(prev).add(newOrderRow.id));
+
+    try {
+      const { data: itemRows, error } = await supabase
+        .from('order_items')
+        .select('*')
+        .eq('order_id', newOrderRow.id);
+
+      if (error) throw error;
+
+      const items = mapOrderItemRows(itemRows || []);
+
+      const orderWithItems: Order = { ...newOrderRow, items };
+      const receiptBytes = buildReceiptEscPos(orderWithItems, storeSettings);
+
+      await printRawEscPos(storeSettings.printer_thermal_nama!, receiptBytes);
+      setQzPrinterStatus('connected');
+      showToast(`Struk pesanan ${newOrderRow.kode_order} otomatis tercetak!`, 'success');
+    } catch (err: any) {
+      setQzPrinterStatus('error');
+      console.error('Auto-print gagal:', err);
+      showToast(
+        `Gagal mencetak otomatis struk ${newOrderRow.kode_order}. Pastikan QZ Tray berjalan & printer terhubung.`,
+        'error'
+      );
+    }
+  };
+
   const handleAddBanner = async (newBanner: { judul: string; gambar: string }) => {
     const id = Math.floor(Date.now() + Math.random() * 100000);
     if (useLocalEmulation) {
@@ -1831,6 +1941,7 @@ self.addEventListener('fetch', event => {
             >
               <OrderHistory
                 orders={orders}
+                onFetchOrderItems={handleFetchOrderItemsForDisplay}
                 onPrintReceipt={async (orderId) => {
                   const order = orders.find((o) => o.id === orderId);
                   if (!order) return;

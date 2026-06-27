@@ -19,6 +19,8 @@ export interface StoreSettings {
   struk_show_alamat?: boolean;
   struk_show_kontak?: boolean;
   struk_show_waktu?: boolean;
+  printer_thermal_nama?: string;
+  printer_auto_print_aktif?: boolean;
 }
 
 export interface Category {
