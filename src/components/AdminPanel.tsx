@@ -44,6 +44,8 @@ import {
 import { supabase } from '../supabaseClient';
 import { isVariantOfProduct, getProductId } from '../utils';
 import { defaultCategories } from '../seedData';
+import { buildReceiptEscPos } from '../printer/escpos';
+import { connectQzTray, listPrinters, printRawEscPos, isQzConnected } from '../printer/qzTray';
 
 interface AdminPanelProps {
   products: Product[];
@@ -461,6 +463,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [strukShowKontak, setStrukShowKontak] = useState(true);
   const [strukShowWaktu, setStrukShowWaktu] = useState(true);
 
+  // QZ Tray / Printer Thermal Connection Settings fields
+  const [printerThermalNama, setPrinterThermalNama] = useState('');
+  const [autoPrintAktif, setAutoPrintAktif] = useState(false);
+  const [qzStatus, setQzStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const [detectedPrinters, setDetectedPrinters] = useState<string[]>([]);
+  const [isScanningPrinters, setIsScanningPrinters] = useState(false);
+  const [isTestPrinting, setIsTestPrinting] = useState(false);
+
   // Bluetooth Direct Printing States
   const [bluetoothDevice, setBluetoothDevice] = useState<any>(null);
   const [bluetoothCharacteristic, setBluetoothCharacteristic] = useState<any>(null);
@@ -679,6 +689,80 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [loadingItemsOrderId, setLoadingItemsOrderId] = useState<number | null>(null);
   const [selectedOrderForPrint, setSelectedOrderForPrint] = useState<Order | null>(null);
 
+  // Hubungkan ke QZ Tray (software lokal di PC/laptop admin) lalu pindai daftar
+  // printer yang terdeteksi sistem operasi. QZ Tray harus sudah terinstall &
+  // berjalan di background — lihat https://qz.io/download/
+  const handleScanPrinters = async () => {
+    setIsScanningPrinters(true);
+    setQzStatus('connecting');
+    try {
+      await connectQzTray();
+      const found = await listPrinters();
+      setDetectedPrinters(found);
+      setQzStatus('connected');
+      if (found.length === 0) {
+        showToast('QZ Tray terhubung, tapi tidak ada printer terdeteksi di sistem.', 'warning');
+      } else {
+        showToast(`QZ Tray terhubung! ${found.length} printer terdeteksi.`, 'success');
+      }
+    } catch (err: any) {
+      setQzStatus('error');
+      console.error('Gagal terhubung ke QZ Tray:', err);
+      showToast(
+        'Gagal terhubung ke QZ Tray. Pastikan aplikasi QZ Tray sudah terinstall & berjalan di perangkat ini.',
+        'error'
+      );
+    } finally {
+      setIsScanningPrinters(false);
+    }
+  };
+
+  // Cetak struk contoh (dummy) ke printer terpilih, untuk memastikan koneksi
+  // & pengaturan format (58mm/80mm, header, footer) sudah benar sebelum
+  // dipakai pada transaksi sungguhan.
+  const handleTestPrint = async () => {
+    if (!printerThermalNama) {
+      showToast('Pilih printer terlebih dahulu sebelum melakukan tes cetak.', 'warning');
+      return;
+    }
+    setIsTestPrinting(true);
+    try {
+      const dummyOrder: Order = {
+        id: 0,
+        user_id: 'test',
+        kode_order: 'TEST-PRINT',
+        total: 25000,
+        status: 'Baru',
+        nama_pembeli: 'Pelanggan Uji Coba',
+        whatsapp_pembeli: '-',
+        alamat: '-',
+        created_at: new Date().toISOString(),
+        items: [
+          { id: 1, nama_produk: 'Produk Contoh', nama_varian: 'Ukuran Standar', qty: 2, harga: 12500 },
+        ],
+      };
+      const settingsForPrint: StoreSettings = {
+        ...storeSettings,
+        struk_lebar: strukLebar,
+        struk_header: strukHeader,
+        struk_footer: strukFooter,
+        struk_show_alamat: strukShowAlamat,
+        struk_show_kontak: strukShowKontak,
+        struk_show_waktu: strukShowWaktu,
+      };
+      const bytes = buildReceiptEscPos(dummyOrder, settingsForPrint);
+      await printRawEscPos(printerThermalNama, bytes);
+      setQzStatus('connected');
+      showToast('Tes cetak terkirim ke printer! Periksa hasil cetakan fisik.', 'success');
+    } catch (err: any) {
+      setQzStatus('error');
+      console.error('Tes cetak gagal:', err);
+      showToast(`Tes cetak gagal: ${err.message || 'Periksa koneksi QZ Tray & printer.'}`, 'error');
+    } finally {
+      setIsTestPrinting(false);
+    }
+  };
+
   const handleOpenThermalPrinter = async (order: Order) => {
     if (order.items && order.items.length > 0) {
       setSelectedOrderForPrint(order);
@@ -728,6 +812,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     } finally {
       setLoadingItemsOrderId(null);
     }
+  };
+
+  // Kirim struk order yang sedang dipreview ke printer thermal lewat QZ Tray.
+  // Kalau printer belum dipilih / QZ Tray belum tersambung, fallback ke
+  // dialog print bawaan browser (window.print()) supaya admin tetap bisa cetak.
+  const handlePrintSelectedOrder = async () => {
+    if (!selectedOrderForPrint) return;
+
+    if (printerThermalNama && isQzConnected()) {
+      try {
+        const bytes = buildReceiptEscPos(selectedOrderForPrint, {
+          ...storeSettings,
+          struk_lebar: strukLebar,
+          struk_header: strukHeader,
+          struk_footer: strukFooter,
+          struk_show_alamat: strukShowAlamat,
+          struk_show_kontak: strukShowKontak,
+          struk_show_waktu: strukShowWaktu,
+        });
+        await printRawEscPos(printerThermalNama, bytes);
+        showToast('Struk terkirim ke printer thermal!', 'success');
+        return;
+      } catch (err: any) {
+        console.error('Gagal mengirim ke printer thermal, fallback ke dialog print:', err);
+        showToast('Gagal mengirim ke printer thermal, membuka dialog cetak browser sebagai cadangan.', 'warning');
+      }
+    }
+
+    // Fallback: dialog print sistem biasa (perlu pilih printer manual).
+    setTimeout(() => {
+      window.print();
+    }, 100);
   };
 
   // Category Form States
@@ -783,6 +899,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setStrukShowAlamat(storeSettings.struk_show_alamat !== false);
     setStrukShowKontak(storeSettings.struk_show_kontak !== false);
     setStrukShowWaktu(storeSettings.struk_show_waktu !== false);
+    setPrinterThermalNama(storeSettings.printer_thermal_nama || '');
+    setAutoPrintAktif(storeSettings.printer_auto_print_aktif === true);
   }, [storeSettings]);
 
   const formatRupiah = (num: number) => {
@@ -962,6 +1080,8 @@ Aturan Penulisan:
       struk_show_alamat: strukShowAlamat,
       struk_show_kontak: strukShowKontak,
       struk_show_waktu: strukShowWaktu,
+      printer_thermal_nama: printerThermalNama,
+      printer_auto_print_aktif: autoPrintAktif,
     });
   };
 
@@ -2203,6 +2323,111 @@ Aturan Penulisan:
                 </div>
               </div>
 
+              {/* KONEKSI PRINTER THERMAL (QZ TRAY) & AUTO-PRINT */}
+              <div className="p-3.5 border border-slate-100 rounded-2xl space-y-3 bg-slate-50">
+                <h5 className="font-bold text-[10px] text-slate-700 uppercase flex items-center gap-1.5 border-b border-slate-200 pb-1.5">
+                  <Bluetooth className="w-4 h-4 text-emerald-500" /> Koneksi Printer Thermal (QZ Tray)
+                </h5>
+
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  Cetak otomatis butuh aplikasi <strong>QZ Tray</strong> terinstall & berjalan di laptop/PC ini.
+                  Belum punya? Unduh di{' '}
+                  <a
+                    href="https://qz.io/download/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-600 font-bold underline"
+                  >
+                    qz.io/download
+                  </a>.
+                </p>
+
+                <div className="flex items-center justify-between gap-2 bg-white p-2.5 rounded-xl border border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full ${
+                        qzStatus === 'connected'
+                          ? 'bg-emerald-500'
+                          : qzStatus === 'connecting'
+                            ? 'bg-amber-400 animate-pulse'
+                            : qzStatus === 'error'
+                              ? 'bg-red-500'
+                              : 'bg-slate-300'
+                      }`}
+                    ></span>
+                    <span className="text-[10px] font-bold text-slate-600">
+                      {qzStatus === 'connected'
+                        ? 'QZ Tray Terhubung'
+                        : qzStatus === 'connecting'
+                          ? 'Menghubungkan...'
+                          : qzStatus === 'error'
+                            ? 'Gagal Terhubung'
+                            : 'Belum Terhubung'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleScanPrinters}
+                    disabled={isScanningPrinters}
+                    className="text-[9px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition disabled:opacity-50"
+                  >
+                    {isScanningPrinters ? 'Memindai...' : 'Pindai Printer'}
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-[9px] text-slate-400 font-bold mb-0.5">Pilih Printer Thermal</label>
+                  <select
+                    value={printerThermalNama}
+                    onChange={(e) => setPrinterThermalNama(e.target.value)}
+                    className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-emerald-500 bg-white font-semibold"
+                  >
+                    <option value="">-- Belum dipilih --</option>
+                    {printerThermalNama && !detectedPrinters.includes(printerThermalNama) && (
+                      <option value={printerThermalNama}>{printerThermalNama} (tersimpan)</option>
+                    )}
+                    {detectedPrinters.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                  {detectedPrinters.length === 0 && (
+                    <p className="text-[9px] text-slate-400 mt-1">Klik "Pindai Printer" untuk mendeteksi printer yang tersambung.</p>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleTestPrint}
+                  disabled={isTestPrinting || !printerThermalNama}
+                  className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold text-[10px] py-2.5 rounded-xl transition flex items-center justify-center gap-1.5 disabled:opacity-40"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>{isTestPrinting ? 'Mengirim Tes Cetak...' : 'Tes Cetak Struk Contoh'}</span>
+                </button>
+
+                <div className="flex items-center gap-2 pt-1.5 border-t border-slate-200">
+                  <input
+                    type="checkbox"
+                    id="auto_print_aktif"
+                    checked={autoPrintAktif}
+                    onChange={(e) => setAutoPrintAktif(e.target.checked)}
+                    className="rounded text-emerald-500 focus:ring-emerald-500 w-3.5 h-3.5"
+                  />
+                  <label htmlFor="auto_print_aktif" className="text-[10px] text-slate-600 font-bold cursor-pointer">
+                    Cetak Otomatis Setiap Ada Pesanan Baru Masuk
+                  </label>
+                </div>
+                {autoPrintAktif && !printerThermalNama && (
+                  <p className="text-[9px] text-amber-600 font-semibold bg-amber-50 border border-amber-200 rounded-lg p-2">
+                    ⚠️ Pilih printer dulu di atas, jika belum auto-print tidak akan berjalan.
+                  </p>
+                )}
+                {autoPrintAktif && printerThermalNama && (
+                  <p className="text-[9px] text-emerald-700 font-semibold bg-emerald-50 border border-emerald-200 rounded-lg p-2">
+                    ✓ Aktif. Pastikan Panel Admin tetap terbuka & QZ Tray berjalan agar struk tercetak otomatis.
+                  </p>
+                )}
+              </div>
 
             </div>
 
@@ -2769,15 +2994,11 @@ Aturan Penulisan:
               <div className="space-y-3 pt-6">
                 <button
                   type="button"
-                  onClick={() => {
-                    setTimeout(() => {
-                      window.print();
-                    }, 100);
-                  }}
+                  onClick={handlePrintSelectedOrder}
                   className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-3 rounded-2xl transition shadow-md flex items-center justify-center gap-2 uppercase tracking-wider"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>Cetak Struk POS</span>
+                  <span>{printerThermalNama ? 'Cetak ke Printer Thermal' : 'Cetak Struk POS'}</span>
                 </button>
 
                 <button

@@ -1,10 +1,11 @@
-import React from 'react';
-import { Receipt, Printer, ExternalLink } from 'lucide-react';
+import React, { useState } from 'react';
+import { Receipt, Printer, ExternalLink, ChevronDown, PackageSearch } from 'lucide-react';
 import { Order } from '../types';
 
 interface OrderHistoryProps {
   orders: Order[];
   onPrintReceipt: (orderId: number) => void;
+  onFetchOrderItems: (orderId: number) => Promise<NonNullable<Order['items']>>;
   notificationPermission: NotificationPermission;
   onRequestNotificationPermission: () => Promise<boolean>;
 }
@@ -12,9 +13,41 @@ interface OrderHistoryProps {
 export const OrderHistory: React.FC<OrderHistoryProps> = ({
   orders,
   onPrintReceipt,
+  onFetchOrderItems,
   notificationPermission,
   onRequestNotificationPermission,
 }) => {
+  // Kartu pesanan mana yang sedang di-expand (cuma 1 pada satu waktu).
+  const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
+  // Cache rincian item per orderId supaya tidak fetch ulang tiap kali expand-collapse-expand.
+  const [itemsCache, setItemsCache] = useState<Record<number, NonNullable<Order['items']>>>({});
+  const [loadingItemsOrderId, setLoadingItemsOrderId] = useState<number | null>(null);
+  const [itemsErrorOrderId, setItemsErrorOrderId] = useState<number | null>(null);
+
+  const handleToggleExpand = async (orderId: number) => {
+    if (expandedOrderId === orderId) {
+      setExpandedOrderId(null);
+      return;
+    }
+
+    setExpandedOrderId(orderId);
+    setItemsErrorOrderId(null);
+
+    // Sudah ada di cache, tidak perlu fetch ulang.
+    if (itemsCache[orderId]) return;
+
+    setLoadingItemsOrderId(orderId);
+    try {
+      const items = await onFetchOrderItems(orderId);
+      setItemsCache((prev) => ({ ...prev, [orderId]: items }));
+    } catch (err) {
+      console.error('Gagal memuat rincian pesanan:', err);
+      setItemsErrorOrderId(orderId);
+    } finally {
+      setLoadingItemsOrderId(null);
+    }
+  };
+
   const formatRupiah = (num: number) => {
     return new Intl.NumberFormat('id-ID').format(num);
   };
@@ -138,41 +171,111 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
 
       {renderNotificationBanner()}
 
-      {orders.map((order) => (
-        <div key={order.id} className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs space-y-3">
-          <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-            <div>
-              <p className="text-[9px] text-slate-400 font-bold">
-                {order.created_at ? new Date(order.created_at).toLocaleDateString('id-ID') : '-'}
-              </p>
-              <h4 className="font-black text-slate-800 text-xs mt-0.5">{order.kode_order}</h4>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onPrintReceipt(order.id)}
-                className="text-[10px] font-black text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl border border-emerald-100 transition flex items-center gap-1"
-              >
-                <Printer className="w-3.5 h-3.5" /> Cetak Struk
-              </button>
-              <span className={`text-[10px] font-black px-3 py-1 rounded-full border ${getStatusStyle(order.status)}`}>
-                {order.status}
-              </span>
-            </div>
-          </div>
-          <div className="space-y-1.5 text-xs text-slate-500">
-            <div className="leading-relaxed">
-              <span className="text-slate-400 font-semibold block mb-0.5">Alamat Pengantaran:</span>
-              <div className="font-bold text-slate-700 whitespace-pre-line">
-                {formatAddressWithMap(order.alamat)}
+      {orders.map((order) => {
+        const isExpanded = expandedOrderId === order.id;
+        const items = itemsCache[order.id];
+        const isLoadingItems = loadingItemsOrderId === order.id;
+        const hasItemsError = itemsErrorOrderId === order.id;
+
+        return (
+          <div key={order.id} className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs space-y-3">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <p className="text-[9px] text-slate-400 font-bold">
+                  {order.created_at ? new Date(order.created_at).toLocaleDateString('id-ID') : '-'}
+                </p>
+                <h4 className="font-black text-slate-800 text-xs mt-0.5">{order.kode_order}</h4>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPrintReceipt(order.id);
+                  }}
+                  className="text-[10px] font-black text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl border border-emerald-100 transition flex items-center gap-1"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Cetak Struk
+                </button>
+                <span className={`text-[10px] font-black px-3 py-1 rounded-full border ${getStatusStyle(order.status)}`}>
+                  {order.status}
+                </span>
               </div>
             </div>
-            <p className="pt-2 border-t border-slate-50">
-              Total Belanja: <span className="font-black text-emerald-600 text-xs">Rp {formatRupiah(order.total)}</span>
-            </p>
+            <div className="space-y-1.5 text-xs text-slate-500">
+              <div className="leading-relaxed">
+                <span className="text-slate-400 font-semibold block mb-0.5">Alamat Pengantaran:</span>
+                <div className="font-bold text-slate-700 whitespace-pre-line">
+                  {formatAddressWithMap(order.alamat)}
+                </div>
+              </div>
+
+              {/* Tombol buka/tutup rincian produk yang dibeli pada pesanan ini */}
+              <button
+                type="button"
+                onClick={() => handleToggleExpand(order.id)}
+                className="w-full flex items-center justify-between pt-2 border-t border-slate-50 text-left group"
+              >
+                <span className="font-black text-emerald-600 text-xs">
+                  Total Belanja: Rp {formatRupiah(order.total)}
+                </span>
+                <span className="flex items-center gap-1 text-[10px] font-bold text-slate-400 group-hover:text-emerald-600 transition">
+                  Rincian Produk
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                  />
+                </span>
+              </button>
+
+              {isExpanded && (
+                <div className="pt-2 mt-1 border-t border-dashed border-slate-100 space-y-2">
+                  {isLoadingItems && (
+                    <p className="text-[10px] text-slate-400 font-semibold py-2 text-center">
+                      Memuat rincian produk...
+                    </p>
+                  )}
+
+                  {!isLoadingItems && hasItemsError && (
+                    <div className="flex flex-col items-center text-center py-3 gap-1">
+                      <PackageSearch className="w-6 h-6 text-slate-300" />
+                      <p className="text-[10px] text-slate-400 font-semibold">
+                        Gagal memuat rincian produk. Coba tutup dan buka lagi.
+                      </p>
+                    </div>
+                  )}
+
+                  {!isLoadingItems && !hasItemsError && items && items.length === 0 && (
+                    <p className="text-[10px] text-slate-400 font-semibold py-2 text-center">
+                      Rincian produk tidak tersedia untuk pesanan ini.
+                    </p>
+                  )}
+
+                  {!isLoadingItems && !hasItemsError && items && items.length > 0 && (
+                    <div className="space-y-2">
+                      {items.map((item, idx) => (
+                        <div
+                          key={item.id ?? idx}
+                          className="flex items-center justify-between gap-3 bg-slate-50 rounded-xl px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-700 text-[11px] truncate">{item.nama_produk}</p>
+                            <p className="text-[9px] text-slate-400 font-semibold">
+                              {item.nama_varian} &middot; {item.qty} x Rp {formatRupiah(item.harga)}
+                            </p>
+                          </div>
+                          <p className="font-black text-slate-700 text-[11px] whitespace-nowrap">
+                            Rp {formatRupiah(item.qty * item.harga)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };
