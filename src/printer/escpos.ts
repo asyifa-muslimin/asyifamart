@@ -49,7 +49,7 @@ export class EscPosBuilder {
     this.bytes.push(...arr);
   }
 
-  private text(str: string) {
+  private rawText(str: string) {
     // Encode sebagai bytes. Printer thermal umumnya pakai code page tertentu
     // (mis. CP437/CP1252); untuk karakter dasar ASCII + Rupiah, encoding UTF-8
     // sederhana sudah cukup untuk mayoritas printer modern (Xprinter, EC Line, dst).
@@ -57,9 +57,24 @@ export class EscPosBuilder {
     this.bytes.push(...Array.from(encoder.encode(str)));
   }
 
+  // Beberapa data lama (atau hasil ketik manual di textarea pengaturan) bisa
+  // berisi teks literal dua-karakter "\n" (backslash + huruf n) padahal yang
+  // dimaksud adalah baris baru sungguhan. Normalisasi di sini supaya kedua
+  // kasus (newline asli \n maupun literal "\n") sama-sama tercetak sebagai
+  // baris baru yang rapi, bukan teks "\n" mentah di struk.
+  private normalizeNewlines(str: string): string {
+    return str.replace(/\\n/g, '\n');
+  }
+
   line(str = '') {
-    this.text(str);
-    this.push(CMD.FEED_LINE);
+    // Pecah jadi multi-baris kalau ada newline (asli atau hasil normalisasi),
+    // supaya tiap baris dapat FEED_LINE-nya sendiri alih-alih satu baris panjang.
+    const normalized = this.normalizeNewlines(str);
+    const segments = normalized.split('\n');
+    segments.forEach((segment) => {
+      this.rawText(segment);
+      this.push(CMD.FEED_LINE);
+    });
     return this;
   }
 

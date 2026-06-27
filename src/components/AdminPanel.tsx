@@ -45,7 +45,7 @@ import { supabase } from '../supabaseClient';
 import { isVariantOfProduct, getProductId } from '../utils';
 import { defaultCategories } from '../seedData';
 import { buildReceiptEscPos } from '../printer/escpos';
-import { connectQzTray, listPrinters, printRawEscPos, isQzConnected } from '../printer/qzTray';
+import { connectQzTray, listPrinters, printRawEscPos } from '../printer/qzTray';
 
 interface AdminPanelProps {
   products: Product[];
@@ -815,13 +815,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   // Kirim struk order yang sedang dipreview ke printer thermal lewat QZ Tray.
-  // Kalau printer belum dipilih / QZ Tray belum tersambung, fallback ke
-  // dialog print bawaan browser (window.print()) supaya admin tetap bisa cetak.
+  // Kalau printer belum dipilih sama sekali, fallback ke dialog print bawaan
+  // browser. Kalau printer sudah dipilih tapi QZ Tray belum tersambung,
+  // KITA COBA CONNECT DULU (sama seperti tombol "Pindai Printer"/"Tes Cetak")
+  // sebelum menyerah ke window.print() — supaya hasil cetak konsisten pakai
+  // printer thermal asli, bukan diam-diam jatuh ke dialog print browser.
   const handlePrintSelectedOrder = async () => {
     if (!selectedOrderForPrint) return;
 
-    if (printerThermalNama && isQzConnected()) {
+    if (printerThermalNama) {
       try {
+        await connectQzTray();
         const bytes = buildReceiptEscPos(selectedOrderForPrint, {
           ...storeSettings,
           struk_lebar: strukLebar,
@@ -832,11 +836,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           struk_show_waktu: strukShowWaktu,
         });
         await printRawEscPos(printerThermalNama, bytes);
+        setQzStatus('connected');
         showToast('Struk terkirim ke printer thermal!', 'success');
         return;
       } catch (err: any) {
+        setQzStatus('error');
         console.error('Gagal mengirim ke printer thermal, fallback ke dialog print:', err);
-        showToast('Gagal mengirim ke printer thermal, membuka dialog cetak browser sebagai cadangan.', 'warning');
+        showToast(
+          'Gagal terhubung ke printer thermal (cek QZ Tray berjalan?). Membuka dialog cetak browser sebagai cadangan.',
+          'warning'
+        );
       }
     }
 
@@ -907,7 +916,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return new Intl.NumberFormat('id-ID').format(num);
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, setUrl: (url: string) => void) => {
+  // Upload file ke Supabase Storage (bucket 'product-photos') dan simpan URL
+  // publiknya, BUKAN base64. Ini menggantikan cara lama (FileReader.readAsDataURL)
+  // yang menyimpan foto langsung sebagai teks base64 di kolom database — itu
+  // membuat payload select('*') jadi sangat besar dan loading aplikasi lambat.
+  // Bucket harus sudah dibuat manual sekali di Dashboard Supabase: Storage ->
+  // New bucket -> nama "product-photos" -> centang "Public bucket".
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, setUrl: (url: string) => void) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -916,17 +931,47 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result) {
-        setUrl(event.target.result as string);
-        showToast('Gambar berhasil diunggah!', 'success');
-      }
-    };
-    reader.onerror = () => {
-      showToast('Gagal membaca file gambar.', 'error');
-    };
-    reader.readAsDataURL(file);
+    if (useLocalEmulation) {
+      // Mode emulasi offline murni: tidak ada Supabase Storage untuk dituju,
+      // tetap pakai base64 lokal supaya admin masih bisa lihat preview-nya.
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setUrl(event.target.result as string);
+          showToast('Gambar dimuat secara lokal (mode emulasi offline).', 'success');
+        }
+      };
+      reader.onerror = () => showToast('Gagal membaca file gambar.', 'error');
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    showToast('Mengunggah gambar...', 'info');
+    try {
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const filePath = `${Date.now()}_${Math.floor(Math.random() * 100000)}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('product-photos')
+        .upload(filePath, file, { cacheControl: '3600', upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage
+        .from('product-photos')
+        .getPublicUrl(filePath);
+
+      if (!publicUrlData?.publicUrl) throw new Error('Gagal mendapatkan URL publik gambar.');
+
+      setUrl(publicUrlData.publicUrl);
+      showToast('Gambar berhasil diunggah!', 'success');
+    } catch (err: any) {
+      console.error('Gagal upload ke Supabase Storage:', err);
+      showToast(
+        `Gagal mengunggah gambar: ${err.message || 'periksa apakah bucket "product-photos" sudah dibuat & public.'}`,
+        'error'
+      );
+    }
   };
 
   const generateAIInsights = async (topic?: 'umum' | 'bundling' | 'omset' | 'wa_promo' | 'stok' | 'custom', customText?: string) => {

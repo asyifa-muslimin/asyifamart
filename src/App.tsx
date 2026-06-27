@@ -395,94 +395,132 @@ export default function App() {
     });
   };
 
+  // Kolom eksplisit per tabel (bukan select('*')) supaya kalau suatu saat ada
+  // kolom besar baru ditambahkan ke tabel, query lama tidak otomatis ikut
+  // menariknya. Untuk products, foto tetap disertakan karena memang dipakai
+  // tampilan — payload besar pada kolom ini sebaiknya diatasi dengan migrasi
+  // foto ke Supabase Storage (URL), bukan dengan menghilangkannya dari select.
+  const COLS = {
+    store_settings:
+      'id, nama_toko, whatsapp, alamat, google_maps, latitude, longitude, payment_cod_active, payment_cod_note, payment_qris_active, payment_qris_image, payment_dana_active, payment_dana_number, payment_dana_name, struk_header, struk_footer, struk_lebar, struk_show_alamat, struk_show_kontak, struk_show_waktu, printer_thermal_nama, printer_auto_print_aktif',
+    categories: 'id, nama_kategori, slug, icon',
+    products: 'id, nama_produk, slug, kategori_id, deskripsi, foto, status',
+    product_variants: 'id, product_id, nama_varian, sku, harga, harga_promo, stok, berat',
+    banners: 'id, judul, gambar, link, aktif',
+    promos: 'id, nama_promo, tipe, nilai, tanggal_mulai, tanggal_selesai',
+  };
+
+  // Tiap fungsi di bawah ini independen (fetch tabelnya sendiri, seed kalau
+  // kosong) sehingga aman dijalankan bersamaan lewat Promise.all di
+  // silentSync(). Dependency foreign key (mis. products -> categories) hanya
+  // relevan saat seeding tabel yang BENAR-BENAR kosong; pada pemakaian normal
+  // (tabel sudah berisi data) ke-6 query ini tidak saling bergantung.
+  const syncStoreSettingsTable = async () => {
+    const { data: settings } = await supabase.from('store_settings').select(COLS.store_settings);
+    if (settings && settings.length > 0) {
+      setStoreSettings(settings[0] as any);
+      safeSetLocalStorage('emulated_store_settings', settings);
+    } else {
+      const { error: seedErr } = await supabase.from('store_settings').insert(defaultStoreSettings);
+      if (!seedErr) {
+        setStoreSettings(defaultStoreSettings);
+        safeSetLocalStorage('emulated_store_settings', [defaultStoreSettings]);
+      }
+    }
+  };
+
+  const syncCategoriesTable = async () => {
+    const { data: cats } = await supabase.from('categories').select(COLS.categories);
+    if (cats && cats.length > 0) {
+      setCategories(cats as any);
+      safeSetLocalStorage('emulated_categories', cats);
+    } else {
+      const { error: seedErr } = await supabase.from('categories').insert(defaultCategories);
+      if (!seedErr) {
+        const { data: refetched } = await supabase.from('categories').select(COLS.categories);
+        if (refetched) {
+          setCategories(refetched as any);
+          safeSetLocalStorage('emulated_categories', refetched);
+        }
+      }
+    }
+  };
+
+  const syncProductsTable = async () => {
+    const { data: prods } = await supabase.from('products').select(COLS.products);
+    if (prods && prods.length > 0) {
+      setProducts(prods as any);
+      safeSetLocalStorage('emulated_products', prods);
+    } else {
+      const { error: seedErr } = await supabase.from('products').insert(defaultProducts);
+      if (!seedErr) {
+        const { data: refetched } = await supabase.from('products').select(COLS.products);
+        if (refetched) {
+          setProducts(refetched as any);
+          safeSetLocalStorage('emulated_products', refetched);
+        }
+      }
+    }
+  };
+
+  const syncVariantsTable = async () => {
+    const { data: vars } = await supabase.from('product_variants').select(COLS.product_variants);
+    if (vars && vars.length > 0) {
+      setVariants(vars as any);
+      safeSetLocalStorage('emulated_product_variants', vars);
+    } else {
+      const { error: seedErr } = await supabase.from('product_variants').insert(defaultVariants);
+      if (!seedErr) {
+        const { data: refetched } = await supabase.from('product_variants').select(COLS.product_variants);
+        if (refetched) {
+          setVariants(refetched as any);
+          safeSetLocalStorage('emulated_product_variants', refetched);
+        }
+      }
+    }
+  };
+
+  const syncBannersTable = async () => {
+    const { data: bans } = await supabase.from('banners').select(COLS.banners);
+    if (bans && bans.length > 0) {
+      setBanners(bans as any);
+      safeSetLocalStorage('emulated_banners', bans);
+    } else {
+      const { error: seedErr } = await supabase.from('banners').insert(defaultBanners);
+      if (!seedErr) {
+        const { data: refetched } = await supabase.from('banners').select(COLS.banners);
+        if (refetched) {
+          setBanners(refetched as any);
+          safeSetLocalStorage('emulated_banners', refetched);
+        }
+      }
+    }
+  };
+
+  const syncPromosTable = async () => {
+    const { data: prms } = await supabase.from('promos').select(COLS.promos);
+    if (prms && prms.length > 0) {
+      setPromos(prms as any);
+      safeSetLocalStorage('emulated_promos', prms);
+    } else {
+      setPromos([]);
+      safeSetLocalStorage('emulated_promos', []);
+    }
+  };
+
   const silentSync = async () => {
     try {
-      // 1. Fetch store_settings
-      const { data: settings } = await supabase.from('store_settings').select('*');
-      if (settings && settings.length > 0) {
-        setStoreSettings(settings[0]);
-        safeSetLocalStorage('emulated_store_settings', settings);
-      } else {
-        const { error: seedErr } = await supabase.from('store_settings').insert(defaultStoreSettings);
-        if (!seedErr) {
-          setStoreSettings(defaultStoreSettings);
-          safeSetLocalStorage('emulated_store_settings', [defaultStoreSettings]);
-        }
-      }
-
-      // 2. Fetch categories
-      let { data: cats } = await supabase.from('categories').select('*');
-      if (cats && cats.length > 0) {
-        setCategories(cats);
-        safeSetLocalStorage('emulated_categories', cats);
-      } else {
-        const { error: seedErr } = await supabase.from('categories').insert(defaultCategories);
-        if (!seedErr) {
-          const { data: refetched } = await supabase.from('categories').select('*');
-          if (refetched) {
-            setCategories(refetched);
-            safeSetLocalStorage('emulated_categories', refetched);
-          }
-        }
-      }
-
-      // 3. Fetch products
-      let { data: prods } = await supabase.from('products').select('*');
-      if (prods && prods.length > 0) {
-        setProducts(prods);
-        safeSetLocalStorage('emulated_products', prods);
-      } else {
-        const { error: seedErr } = await supabase.from('products').insert(defaultProducts);
-        if (!seedErr) {
-          const { data: refetched } = await supabase.from('products').select('*');
-          if (refetched) {
-            setProducts(refetched);
-            safeSetLocalStorage('emulated_products', refetched);
-          }
-        }
-      }
-
-      // 4. Fetch product_variants
-      let { data: vars } = await supabase.from('product_variants').select('*');
-      if (vars && vars.length > 0) {
-        setVariants(vars);
-        safeSetLocalStorage('emulated_product_variants', vars);
-      } else {
-        const { error: seedErr } = await supabase.from('product_variants').insert(defaultVariants);
-        if (!seedErr) {
-          const { data: refetched } = await supabase.from('product_variants').select('*');
-          if (refetched) {
-            setVariants(refetched);
-            safeSetLocalStorage('emulated_product_variants', refetched);
-          }
-        }
-      }
-
-      // 5. Fetch banners
-      let { data: bans } = await supabase.from('banners').select('*');
-      if (bans && bans.length > 0) {
-        setBanners(bans);
-        safeSetLocalStorage('emulated_banners', bans);
-      } else {
-        const { error: seedErr } = await supabase.from('banners').insert(defaultBanners);
-        if (!seedErr) {
-          const { data: refetched } = await supabase.from('banners').select('*');
-          if (refetched) {
-            setBanners(refetched);
-            safeSetLocalStorage('emulated_banners', refetched);
-          }
-        }
-      }
-
-      // 6. Fetch promos
-      let { data: prms } = await supabase.from('promos').select('*');
-      if (prms && prms.length > 0) {
-        setPromos(prms);
-        safeSetLocalStorage('emulated_promos', prms);
-      } else {
-        setPromos([]);
-        safeSetLocalStorage('emulated_promos', []);
-      }
+      // Jalankan keenam sync tabel secara PARALEL (bukan berurutan dengan
+      // await satu-per-satu) supaya total waktu = waktu query paling lambat,
+      // bukan akumulasi seluruh query.
+      await Promise.all([
+        syncStoreSettingsTable(),
+        syncCategoriesTable(),
+        syncProductsTable(),
+        syncVariantsTable(),
+        syncBannersTable(),
+        syncPromosTable(),
+      ]);
 
       const nowStr = new Date().toLocaleString('id-ID');
       safeSetLocalStorage('offline_backup_timestamp', nowStr);
@@ -579,7 +617,10 @@ export default function App() {
       return;
     }
     try {
-      let query = supabase.from('orders').select('*').order('id', { ascending: false });
+      let query = supabase
+        .from('orders')
+        .select('id, user_id, kode_order, total, status, nama_pembeli, whatsapp_pembeli, alamat, catatan, created_at')
+        .order('id', { ascending: false });
       if (currentUser.role !== 'admin') {
         query = query.eq('user_id', currentUser.id);
       }
