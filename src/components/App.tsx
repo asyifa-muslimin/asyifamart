@@ -155,10 +155,6 @@ export default function App() {
     }
   };
 
-  // Secret Gateway Clicker Tracker
-  const brandClickCount = useRef(0);
-  const brandClickTimeout = useRef<NodeJS.Timeout | null>(null);
-
   // --- INITIALIZATION ---
   useEffect(() => {
     // Geolocation and online listeners
@@ -654,37 +650,7 @@ export default function App() {
 
   // --- ACTIONS & HANDLERS ---
   const handleBrandClick = () => {
-    brandClickCount.current += 1;
-    if (brandClickTimeout.current) {
-      clearTimeout(brandClickTimeout.current);
-    }
-    if (brandClickCount.current === 3) {
-      brandClickCount.current = 0;
-      loginAsDemoAdmin();
-      return;
-    }
-    brandClickTimeout.current = setTimeout(() => {
-      brandClickCount.current = 0;
-    }, 800);
-
     setCurrentPage('home');
-  };
-
-  const loginAsDemoAdmin = () => {
-    const adminUser: User = {
-      id: 'demo-admin-999',
-      nama: 'Administrator Demo',
-      email: 'admin@asyifamart.com',
-      whatsapp: '6281234567890',
-      alamat: 'Depok Town, Indonesia',
-      google_maps: 'https://maps.google.com/?q=-6.372,106.829',
-      role: 'admin',
-      created_at: new Date().toISOString(),
-    };
-    setCurrentUser(adminUser);
-    localStorage.setItem('asyifa_user', JSON.stringify(adminUser));
-    showToast('Berhasil Masuk sebagai Administrator!', 'success');
-    navigate('admin');
   };
 
   const navigate = (page: typeof currentPage) => {
