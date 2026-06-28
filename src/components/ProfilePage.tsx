@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { User, Locate, MapPin, ExternalLink } from 'lucide-react';
+import { User, Locate, MapPin, ExternalLink, Eye, EyeOff } from 'lucide-react';
 import { User as UserType } from '../types';
 
 interface ProfilePageProps {
   currentUser: UserType | null;
-  onLogin: (email: string) => Promise<void>;
+  onLogin: (email: string, password: string) => Promise<void>;
   onRegister: (data: {
     nama: string;
     email: string;
+    password: string;
     whatsapp: string;
     alamat: string;
     mapsUrl: string;
@@ -24,32 +25,44 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   showToast,
 }) => {
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
-  
+
   // Login Form States
-  const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   // Register Form States
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
   const [regWa, setRegWa] = useState('');
   const [regAlamat, setRegAlamat] = useState('');
   const [regMaps, setRegMaps] = useState('');
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginIdentifier.trim()) return;
-    await onLogin(loginIdentifier.trim());
+    if (!loginEmail.trim() || !loginPassword) {
+      showToast('Harap isi email dan kata sandi.', 'warning');
+      return;
+    }
+    await onLogin(loginEmail.trim(), loginPassword);
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName.trim() || !regEmail.trim() || !regWa.trim() || !regAlamat.trim()) {
+    if (!regName.trim() || !regEmail.trim() || !regPassword || !regWa.trim() || !regAlamat.trim()) {
       showToast('Harap isi semua kolom wajib!', 'warning');
+      return;
+    }
+    if (regPassword.length < 6) {
+      showToast('Kata sandi minimal 6 karakter.', 'warning');
       return;
     }
     await onRegister({
       nama: regName.trim(),
       email: regEmail.trim(),
+      password: regPassword,
       whatsapp: regWa.trim(),
       alamat: regAlamat.trim(),
       mapsUrl: regMaps.trim(),
@@ -163,15 +176,35 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       {authTab === 'login' ? (
         <form onSubmit={handleLoginSubmit} className="space-y-4">
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 mb-1">No. WhatsApp atau Email</label>
+            <label className="block text-[10px] font-bold text-slate-400 mb-1">Email</label>
             <input
-              type="text"
-              value={loginIdentifier}
-              onChange={(e) => setLoginIdentifier(e.target.value)}
+              type="email"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
               required
-              placeholder="Contoh: 0812345... atau user@asyifamart.com"
+              placeholder="Contoh: user@asyifamart.com"
               className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-emerald-500 text-xs bg-slate-50 font-semibold"
             />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 mb-1">Kata Sandi</label>
+            <div className="relative">
+              <input
+                type={showLoginPassword ? 'text' : 'password'}
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                required
+                placeholder="Masukkan kata sandi"
+                className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 pr-10 focus:ring-2 focus:ring-emerald-500 text-xs bg-slate-50 font-semibold"
+              />
+              <button
+                type="button"
+                onClick={() => setShowLoginPassword(!showLoginPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
           <button
             type="submit"
@@ -201,6 +234,27 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               required
               className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-emerald-500 text-xs bg-slate-50 font-semibold"
             />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 mb-1">Buat Kata Sandi (min. 6 karakter)</label>
+            <div className="relative">
+              <input
+                type={showRegPassword ? 'text' : 'password'}
+                value={regPassword}
+                onChange={(e) => setRegPassword(e.target.value)}
+                required
+                minLength={6}
+                placeholder="Minimal 6 karakter"
+                className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 pr-10 focus:ring-2 focus:ring-emerald-500 text-xs bg-slate-50 font-semibold"
+              />
+              <button
+                type="button"
+                onClick={() => setShowRegPassword(!showRegPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
           <div>
             <label className="block text-[10px] font-bold text-slate-400 mb-1">No. WhatsApp</label>
