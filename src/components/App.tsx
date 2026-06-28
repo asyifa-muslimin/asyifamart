@@ -933,19 +933,57 @@ Catatan: ${checkoutData.catatan}
       if (!authData.user) throw new Error('Masuk gagal, sesi tidak terbentuk.');
 
       // Ambil profil (nama, WA, alamat, role) dari tabel users berdasarkan id
-      // yang sama dengan id akun Auth ini.
-      const { data, error } = await supabase
+      // yang sama dengan id akun Auth ini. Pakai maybeSingle() (bukan single())
+      // supaya tidak melempar error mentah kalau baris belum/tidak ada --
+      // kita tangani sendiri di bawah dengan pesan yang jelas + auto-perbaikan.
+      const { data: profile, error: profileError } = await supabase
         .from('users')
         .select('*')
         .eq('id', authData.user.id)
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
+      if (profileError) throw profileError;
 
-      setCurrentUser(data);
-      localStorage.setItem('asyifa_user', JSON.stringify(data));
-      showToast(`Selamat datang kembali, ${data.nama}!`, 'success');
-      if (data.role === 'admin') navigate('admin');
+      if (!profile) {
+        // Akun Auth valid, tapi baris profil di tabel `users` tidak ditemukan
+        // dengan id yang sama (bisa terjadi kalau akun pernah didaftarkan
+        // ulang dengan email yang sama sebelum dikonfirmasi, menghasilkan id
+        // Auth baru yang tidak nyambung dengan baris lama). Buat profil baru
+        // secara otomatis dari data Auth yang ada, supaya pengguna tidak
+        // macet tanpa bisa masuk sama sekali.
+        const fallbackNama = authData.user.email?.split('@')[0] || 'Pengguna';
+        const { data: created, error: createError } = await supabase
+          .from('users')
+          .insert([
+            {
+              id: authData.user.id,
+              nama: fallbackNama,
+              email: authData.user.email,
+              whatsapp: '',
+              alamat: '',
+              role: authData.user.email?.toLowerCase() === 'admin@asyifamart.com' ? 'admin' : 'pelanggan',
+            },
+          ])
+          .select()
+          .maybeSingle();
+
+        if (createError || !created) {
+          throw new Error(
+            'Akun login Anda valid, tapi profil data belum tersedia dan gagal dibuat otomatis. Silakan hubungi admin toko.'
+          );
+        }
+
+        setCurrentUser(created);
+        localStorage.setItem('asyifa_user', JSON.stringify(created));
+        showToast(`Profil baru dibuat & masuk sebagai ${created.nama}. Silakan lengkapi data di halaman Profil.`, 'info');
+        navigate('home');
+        return;
+      }
+
+      setCurrentUser(profile);
+      localStorage.setItem('asyifa_user', JSON.stringify(profile));
+      showToast(`Selamat datang kembali, ${profile.nama}!`, 'success');
+      if (profile.role === 'admin') navigate('admin');
       else navigate('home');
     } catch (err: any) {
       const msg = String(err.message || '');
