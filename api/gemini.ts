@@ -16,7 +16,7 @@ import { GoogleGenAI } from '@google/genai';
 let aiClient: InstanceType<typeof GoogleGenAI> | null = null;
 
 function getGeminiClient() {
-  const apiKey = process.env.AQ.Ab8RN6L3UoajXYaGzf6LvBSGAQ0AGOSL8Vkvrl1RL29lnuJkww;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY belum dikonfigurasi. Tambahkan di Vercel Dashboard > Project Settings > Environment Variables.');
   }
