@@ -189,6 +189,16 @@ export default function App() {
       setCurrentUser(JSON.parse(savedUser));
     }
 
+    // Dengarkan perubahan sesi Supabase Auth (login dari tab lain, sesi
+    // habis/expired, dsb) supaya currentUser tidak "nyangkut" di status
+    // login padahal sesi Auth sebenarnya sudah berakhir.
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        setCurrentUser(null);
+        localStorage.removeItem('asyifa_user');
+      }
+    });
+
     const savedCart = localStorage.getItem('asyifa_cart');
     if (savedCart) {
       setCart(JSON.parse(savedCart));
@@ -214,6 +224,7 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      authListener?.subscription.unsubscribe();
     };
   }, [originalModePreference]);
 
@@ -892,17 +903,16 @@ Catatan: ${checkoutData.catatan}
     setCurrentPage('home');
   };
 
-  const handleLogin = async (identifier: string) => {
-    const isEmail = identifier.includes('@');
+  const handleLogin = async (email: string, password: string) => {
     if (useLocalEmulation) {
       // Offline local auth
       const mockUser: User = {
         id: 'emulated-user-123',
-        nama: isEmail ? identifier.split('@')[0] : `User-${identifier}`,
-        email: isEmail ? identifier : `user-${identifier}@asyifamart.com`,
-        whatsapp: isEmail ? '081234567890' : identifier,
+        nama: email.split('@')[0],
+        email: email,
+        whatsapp: '081234567890',
         alamat: 'Alamat Emulasi Lokal',
-        role: identifier.toLowerCase() === 'admin@asyifamart.com' ? 'admin' : 'pelanggan',
+        role: email.toLowerCase() === 'admin@asyifamart.com' ? 'admin' : 'pelanggan',
         created_at: new Date().toISOString(),
       };
       setCurrentUser(mockUser);
@@ -912,41 +922,45 @@ Catatan: ${checkoutData.catatan}
     }
 
     try {
-      const identifierLower = identifier.toLowerCase().trim();
-      let orFilter = `email.eq.${identifierLower},whatsapp.eq.${identifier}`;
-      const cleanPhone = identifier.replace(/[^0-9]/g, '');
-      if (cleanPhone) {
-        orFilter += `,whatsapp.eq.${cleanPhone}`;
-        if (cleanPhone.startsWith('0')) {
-          orFilter += `,whatsapp.eq.62${cleanPhone.slice(1)}`;
-        } else if (cleanPhone.startsWith('62')) {
-          orFilter += `,whatsapp.eq.0${cleanPhone.slice(2)}`;
-        }
-      }
+      // Masuk lewat Supabase Auth (email + password resmi), bukan lagi
+      // lookup manual ke tabel users tanpa password.
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
+      if (authError) throw authError;
+      if (!authData.user) throw new Error('Masuk gagal, sesi tidak terbentuk.');
+
+      // Ambil profil (nama, WA, alamat, role) dari tabel users berdasarkan id
+      // yang sama dengan id akun Auth ini.
       const { data, error } = await supabase
         .from('users')
         .select('*')
-        .or(orFilter);
+        .eq('id', authData.user.id)
+        .single();
+
       if (error) throw error;
 
-      if (data && data.length > 0) {
-        setCurrentUser(data[0]);
-        localStorage.setItem('asyifa_user', JSON.stringify(data[0]));
-        showToast(`Selamat datang kembali, ${data[0].nama}!`, 'success');
-        if (data[0].role === 'admin') navigate('admin');
-        else navigate('home');
-      } else {
-        showToast('Akun tidak ditemukan. Silakan periksa No. WhatsApp / Email Anda atau pilih tab Daftar.', 'warning');
-      }
+      setCurrentUser(data);
+      localStorage.setItem('asyifa_user', JSON.stringify(data));
+      showToast(`Selamat datang kembali, ${data.nama}!`, 'success');
+      if (data.role === 'admin') navigate('admin');
+      else navigate('home');
     } catch (err: any) {
-      showToast(`Masuk gagal: ${err.message}`, 'error');
+      const msg = String(err.message || '');
+      if (msg.toLowerCase().includes('invalid login credentials')) {
+        showToast('Email atau kata sandi salah. Silakan periksa kembali.', 'error');
+      } else {
+        showToast(`Masuk gagal: ${msg}`, 'error');
+      }
     }
   };
 
   const handleRegister = async (regData: {
     nama: string;
     email: string;
+    password: string;
     whatsapp: string;
     alamat: string;
     mapsUrl: string;
@@ -972,17 +986,25 @@ Catatan: ${checkoutData.catatan}
     }
 
     try {
-      const { data: existing } = await supabase.from('users').select('*').eq('email', regData.email);
-      if (existing && existing.length > 0) {
-        showToast('Email sudah terdaftar. Silakan masuk.', 'warning');
-        return;
-      }
+      // Daftar lewat Supabase Auth (bukan lagi insert manual ke tabel users).
+      // Supabase Auth akan membuat akun resmi dengan email+password, dan
+      // memberi `id` (UUID) unik yang nanti jadi acuan auth.uid() untuk RLS.
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: regData.email,
+        password: regData.password,
+      });
 
+      if (authError) throw authError;
+      if (!authData.user) throw new Error('Pendaftaran gagal, akun tidak terbentuk.');
+
+      // Simpan profil (nama, WA, alamat) ke tabel `users`, dengan id YANG SAMA
+      // dengan id dari Supabase Auth -- ini penghubung penting antara akun
+      // login dan data profil/pesanan pelanggan.
       const { data, error } = await supabase
         .from('users')
         .insert([
           {
-            id: crypto.randomUUID(),
+            id: authData.user.id,
             nama: regData.nama,
             email: regData.email,
             whatsapp: regData.whatsapp,
@@ -1001,11 +1023,21 @@ Catatan: ${checkoutData.catatan}
         navigate('home');
       }
     } catch (err: any) {
-      showToast(`Gagal mendaftar: ${err.message}`, 'error');
+      // Pesan Supabase Auth untuk email yang sudah terdaftar biasanya
+      // menyebut "already registered" -- terjemahkan supaya lebih jelas.
+      const msg = String(err.message || '');
+      if (msg.toLowerCase().includes('already registered') || msg.toLowerCase().includes('already exists')) {
+        showToast('Email sudah terdaftar. Silakan masuk dengan kata sandi Anda.', 'warning');
+      } else {
+        showToast(`Gagal mendaftar: ${msg}`, 'error');
+      }
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (!useLocalEmulation) {
+      await supabase.auth.signOut();
+    }
     setCurrentUser(null);
     localStorage.removeItem('asyifa_user');
     showToast('Berhasil keluar dari akun.', 'warning');
