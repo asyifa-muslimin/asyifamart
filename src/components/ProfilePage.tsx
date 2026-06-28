@@ -51,8 +51,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName.trim() || !regEmail.trim() || !regPassword || !regWa.trim() || !regAlamat.trim()) {
-      showToast('Harap isi semua kolom wajib!', 'warning');
+    if (
+      !regName.trim() ||
+      !regEmail.trim() ||
+      !regPassword ||
+      !regWa.trim() ||
+      !regAlamat.trim() ||
+      !regMaps.trim()
+    ) {
+      showToast('Harap isi semua kolom wajib, termasuk Titik Lokasi Google Maps!', 'warning');
       return;
     }
     if (regPassword.length < 6) {
@@ -288,6 +295,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 type="url"
                 value={regMaps}
                 onChange={(e) => setRegMaps(e.target.value)}
+                required
                 placeholder="https://maps.google.com/..."
                 className="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 font-semibold"
               />
