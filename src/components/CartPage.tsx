@@ -46,6 +46,7 @@ export const CartPage: React.FC<CartPageProps> = ({
 
   const [distance, setDistance] = useState(0);
   const [ongkir, setOngkir] = useState(0);
+  const [isOutOfDeliveryRange, setIsOutOfDeliveryRange] = useState(false);
 
   useEffect(() => {
     if (currentUser) {
@@ -88,6 +89,23 @@ export const CartPage: React.FC<CartPageProps> = ({
     }
   };
 
+  // Aturan ongkos kirim ASYIFA MART:
+  // - 0 s.d. 2 km   : gratis ongkir
+  // - 2.1 s.d. 5 km  : Rp2.000 per km, dihitung HANYA dari kelebihan jarak di
+  //                    atas 2 km (bukan dari total jarak), presisi desimal
+  //                    tanpa pembulatan. Misal 3.4 km -> kelebihan 1.4 km
+  //                    -> Rp2.000 x 1.4 = Rp2.800.
+  // - lebih dari 5 km: di luar area layanan, pesanan tidak dapat diproses.
+  const RADIUS_GRATIS_KM = 2;
+  const RADIUS_MAKSIMAL_KM = 5;
+  const TARIF_PER_KM = 2000;
+
+  const calculateOngkir = (jarak: number): number => {
+    if (jarak <= RADIUS_GRATIS_KM) return 0;
+    const kelebihanKm = jarak - RADIUS_GRATIS_KM;
+    return Math.round(kelebihanKm * TARIF_PER_KM);
+  };
+
   const applyShipping = (userLat: number, userLon: number) => {
     const storeLat = storeSettings.latitude || -4.2816;
     const storeLon = storeSettings.longitude || 104.5936;
@@ -95,11 +113,25 @@ export const CartPage: React.FC<CartPageProps> = ({
     const computedDistance = calculateDistance(storeLat, storeLon, userLat, userLon);
     setDistance(computedDistance);
 
-    if (computedDistance <= 2) {
+    if (computedDistance > RADIUS_MAKSIMAL_KM) {
+      // Di luar area layanan: kosongkan ongkir & tandai tidak valid supaya
+      // handleSubmit menolak checkout, bukan cuma menampilkan peringatan.
+      setOngkir(0);
+      setIsOutOfDeliveryRange(true);
+      showToast(
+        `Maaf, lokasi Anda (${computedDistance.toFixed(2)} Km) di luar area layanan kami (maksimal ${RADIUS_MAKSIMAL_KM} Km).`,
+        'error'
+      );
+      return;
+    }
+
+    setIsOutOfDeliveryRange(false);
+
+    if (computedDistance <= RADIUS_GRATIS_KM) {
       setOngkir(0);
       showToast(`Radius Pengantaran: ${computedDistance.toFixed(2)} Km. Anda mendapatkan Gratis Ongkir!`, 'success');
     } else {
-      const computedOngkir = Math.ceil(computedDistance) * 2000;
+      const computedOngkir = calculateOngkir(computedDistance);
       setOngkir(computedOngkir);
       showToast(`Radius Pengantaran: ${computedDistance.toFixed(2)} Km. Ongkir Rp ${formatRupiah(computedOngkir)} otomatis diterapkan.`, 'info');
     }
@@ -130,6 +162,20 @@ export const CartPage: React.FC<CartPageProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return;
+
+    if (isOutOfDeliveryRange) {
+      showToast(
+        `Maaf, lokasi Anda di luar area layanan kami (maksimal ${RADIUS_MAKSIMAL_KM} Km). Pesanan tidak dapat diproses.`,
+        'error'
+      );
+      return;
+    }
+
+    if (distance <= 0 && mapsUrl.trim() === '') {
+      showToast('Harap isi Titik Lokasi Google Maps atau lacak GPS terlebih dahulu agar ongkir dapat dihitung.', 'warning');
+      return;
+    }
+
     onCheckout({
       nama,
       wa,
@@ -272,14 +318,23 @@ export const CartPage: React.FC<CartPageProps> = ({
             {distance > 0 && (
               <div className="flex justify-between text-xs text-slate-600">
                 <span>Jarak Pengiriman</span>
-                <span className="font-bold text-slate-800">{distance.toFixed(2)} Km</span>
+                <span className={`font-bold ${isOutOfDeliveryRange ? 'text-red-500' : 'text-slate-800'}`}>
+                  {distance.toFixed(2)} Km
+                </span>
+              </div>
+            )}
+
+            {isOutOfDeliveryRange && (
+              <div className="bg-red-50 border border-red-200 text-red-600 text-[11px] font-semibold rounded-xl p-3 leading-relaxed">
+                Maaf, lokasi Anda di luar area layanan kami (maksimal {RADIUS_MAKSIMAL_KM} Km dari toko).
+                Pesanan tidak dapat diproses untuk jarak ini.
               </div>
             )}
 
             <div className="flex justify-between text-xs text-slate-600">
               <span>Biaya Pengantaran</span>
-              <span className={ongkir === 0 ? 'font-bold text-emerald-600' : 'font-bold text-slate-800'}>
-                {ongkir === 0 ? 'Gratis' : `Rp ${formatRupiah(ongkir)}`}
+              <span className={ongkir === 0 && !isOutOfDeliveryRange ? 'font-bold text-emerald-600' : 'font-bold text-slate-800'}>
+                {isOutOfDeliveryRange ? '-' : ongkir === 0 ? 'Gratis' : `Rp ${formatRupiah(ongkir)}`}
               </span>
             </div>
 
@@ -489,10 +544,15 @@ export const CartPage: React.FC<CartPageProps> = ({
 
             <button
               type="submit"
-              className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition duration-150 text-xs uppercase tracking-wider mt-4"
+              disabled={isOutOfDeliveryRange}
+              className={`w-full font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-lg transition duration-150 text-xs uppercase tracking-wider mt-4 ${
+                isOutOfDeliveryRange
+                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                  : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-500/20'
+              }`}
             >
               <MessageSquare className="w-4 h-4" />
-              <span>Kirim Pesanan ke WhatsApp</span>
+              <span>{isOutOfDeliveryRange ? 'Di Luar Area Layanan' : 'Kirim Pesanan ke WhatsApp'}</span>
             </button>
           </form>
         </div>
