@@ -1247,8 +1247,8 @@ Aturan Penulisan:
       showToast('Nama hadiah wajib diisi.', 'warning');
       return;
     }
-    if (rewardBiayaKoin < 100) {
-      showToast('Biaya koin minimal 100 koin.', 'warning');
+    if (rewardBiayaKoin < MINIMAL_KOIN_TUKAR) {
+      showToast(`Biaya koin minimal ${MINIMAL_KOIN_TUKAR} koin.`, 'warning');
       return;
     }
     await onSaveReward({
