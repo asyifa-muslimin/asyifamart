@@ -76,6 +76,7 @@ export interface User {
   alamat?: string;
   google_maps?: string;
   role: 'admin' | 'pelanggan';
+  koin?: number;
   created_at?: string;
 }
 
@@ -89,6 +90,7 @@ export interface Order {
   whatsapp_pembeli: string;
   alamat: string;
   catatan?: string;
+  koin_diperoleh?: number;
   created_at?: string;
   items?: Array<{
     id?: number;
@@ -116,4 +118,26 @@ export interface WishlistItem {
 export interface CartItem {
   variant_id: number;
   qty: number;
+}
+
+export interface Reward {
+  id: number;
+  nama_hadiah: string;
+  deskripsi?: string;
+  foto?: string;
+  biaya_koin: number;
+  stok: number;
+  aktif: boolean;
+  created_at?: string;
+}
+
+export interface RewardRedemption {
+  id: number;
+  user_id: string;
+  reward_id: number;
+  nama_hadiah: string; // disalin saat penukaran, supaya riwayat tetap utuh walau reward diedit/dihapus nanti
+  koin_terpakai: number;
+  status: 'Menunggu' | 'Diproses' | 'Terkirim' | 'Dibatalkan';
+  catatan_admin?: string;
+  created_at?: string;
 }
