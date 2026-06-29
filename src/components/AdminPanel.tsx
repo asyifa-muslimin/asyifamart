@@ -40,6 +40,8 @@ import {
   Promo,
   StoreSettings,
   ProductVariant,
+  Reward,
+  RewardRedemption,
 } from '../types';
 import { supabase } from '../supabaseClient';
 import { isVariantOfProduct, getProductId } from '../utils';
@@ -53,6 +55,8 @@ interface AdminPanelProps {
   orders: Order[];
   banners: Banner[];
   promos: Promo[];
+  rewards: Reward[];
+  redemptions: RewardRedemption[];
   storeSettings: StoreSettings;
   variants: ProductVariant[];
   useLocalEmulation: boolean;
@@ -89,9 +93,34 @@ interface AdminPanelProps {
     tanggal_selesai: string;
   }) => Promise<void>;
   onDeletePromo: (id: number) => Promise<void>;
+  onSaveReward: (reward: {
+    id?: number;
+    nama_hadiah: string;
+    deskripsi: string;
+    foto: string;
+    biaya_koin: number;
+    stok: number;
+    aktif: boolean;
+  }) => Promise<void>;
+  onDeleteReward: (id: number) => Promise<void>;
+  onUpdateRedemptionStatus: (redemptionId: number, status: RewardRedemption['status']) => Promise<void>;
   onDownloadServiceWorker: () => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
+
+// Pengaman tambahan di sisi browser: walaupun server /api/gemini sudah
+// dijamin merespons dalam waktu singkat (lihat server.ts), fetch tanpa
+// batas waktu tetap bisa menggantung kalau ada gangguan jaringan di luar
+// kendali server (mis. koneksi putus di tengah jalan). AbortController
+// memastikan tombol AI di Admin Panel tidak pernah "loading selamanya".
+const fetchWithTimeout = (url: string, options: RequestInit, timeoutMs = 12000): Promise<Response> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
+    clearTimeout(timeoutId);
+  });
+};
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   products,
@@ -99,6 +128,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   orders,
   banners,
   promos,
+  rewards,
+  redemptions,
   storeSettings,
   variants,
   useLocalEmulation,
@@ -114,10 +145,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onDeleteBanner,
   onAddPromo,
   onDeletePromo,
+  onSaveReward,
+  onDeleteReward,
+  onUpdateRedemptionStatus,
   onDownloadServiceWorker,
   showToast,
 }) => {
-  const [adminTab, setAdminTab] = useState<'dashboard' | 'produk' | 'kategori' | 'pesanan' | 'promo' | 'pengaturan'>('dashboard');
+  const [adminTab, setAdminTab] = useState<'dashboard' | 'produk' | 'kategori' | 'pesanan' | 'promo' | 'hadiah' | 'pengaturan'>('dashboard');
 
   // Dashboard Period Filter State
   const [dashboardPeriod, setDashboardPeriod] = useState<'all' | 'today' | '7days' | '30days'>('all');
@@ -871,6 +905,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [promoStart, setPromoStart] = useState('');
   const [promoEnd, setPromoEnd] = useState('');
 
+  // Reward (Hadiah) form states
+  const [isRewardModalOpen, setIsRewardModalOpen] = useState(false);
+  const [editingRewardId, setEditingRewardId] = useState<number | undefined>(undefined);
+  const [rewardNama, setRewardNama] = useState('');
+  const [rewardDeskripsi, setRewardDeskripsi] = useState('');
+  const [rewardFoto, setRewardFoto] = useState('');
+  const [rewardBiayaKoin, setRewardBiayaKoin] = useState(100);
+  const [rewardStok, setRewardStok] = useState(0);
+  const [rewardAktif, setRewardAktif] = useState(true);
+
   // Product Form States
   const [editingProductId, setEditingProductId] = useState<number | undefined>(undefined);
   const [prodName, setProdName] = useState('');
@@ -1029,7 +1073,7 @@ Aturan Penulisan:
 3. Hindari kalimat pengantar yang berbelit-belit. Maksimal panjang respons adalah 3 paragraf pendek atau setara.`;
 
     try {
-      const res = await fetch('/api/gemini', {
+      const res = await fetchWithTimeout('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: context, systemInstruction: "Kamu adalah Konsultan Bisnis AI untuk Toko Kelontong 'Asyifa Mart'." }),
@@ -1043,7 +1087,10 @@ Aturan Penulisan:
         setAiInsights('Gagal menghasilkan analisis bisnis AI.');
       }
     } catch (err: any) {
-      setAiInsights(`Gagal memanggil AI: ${err.message || 'Silakan periksa koneksi atau model API Anda.'}`);
+      const msg = err.name === 'AbortError'
+        ? 'AI tidak merespons dalam waktu yang wajar. Silakan coba lagi.'
+        : (err.message || 'Silakan periksa koneksi atau model API Anda.');
+      setAiInsights(`Gagal memanggil AI: ${msg}`);
     } finally {
       setLoadingAi(false);
     }
@@ -1057,7 +1104,7 @@ Aturan Penulisan:
     showToast('Sedang membuat deskripsi menarik via Gemini...', 'info');
     try {
       const prompt = `Buat deskripsi persuasif, komersial, singkat, dan siap saji (maksimal 3 kalimat pendek) dalam Bahasa Indonesia untuk produk sembako bernama: "${prodName}".`;
-      const res = await fetch('/api/gemini', {
+      const res = await fetchWithTimeout('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, systemInstruction: 'Kamu adalah asisten copywriter profesional.' }),
@@ -1072,7 +1119,8 @@ Aturan Penulisan:
         showToast('Gagal memanggil AI.', 'error');
       }
     } catch (err: any) {
-      showToast(`Gagal memanggil AI: ${err.message || ''}`, 'error');
+      const msg = err.name === 'AbortError' ? 'AI tidak merespons dalam waktu yang wajar.' : (err.message || '');
+      showToast(`Gagal memanggil AI: ${msg}`, 'error');
     }
   };
 
@@ -1168,6 +1216,50 @@ Aturan Penulisan:
     setPromoValue(0);
     setPromoStart('');
     setPromoEnd('');
+  };
+
+  const handleOpenAddReward = () => {
+    setEditingRewardId(undefined);
+    setRewardNama('');
+    setRewardDeskripsi('');
+    setRewardFoto('');
+    setRewardBiayaKoin(100);
+    setRewardStok(0);
+    setRewardAktif(true);
+    setIsRewardModalOpen(true);
+  };
+
+  const handleOpenEditReward = (reward: Reward) => {
+    setEditingRewardId(reward.id);
+    setRewardNama(reward.nama_hadiah);
+    setRewardDeskripsi(reward.deskripsi || '');
+    setRewardFoto(reward.foto || '');
+    setRewardBiayaKoin(reward.biaya_koin);
+    setRewardStok(reward.stok);
+    setRewardAktif(reward.aktif);
+    setIsRewardModalOpen(true);
+  };
+
+  const handleRewardSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rewardNama.trim()) {
+      showToast('Nama hadiah wajib diisi.', 'warning');
+      return;
+    }
+    if (rewardBiayaKoin < 100) {
+      showToast('Biaya koin minimal 100 koin.', 'warning');
+      return;
+    }
+    await onSaveReward({
+      id: editingRewardId,
+      nama_hadiah: rewardNama.trim(),
+      deskripsi: rewardDeskripsi.trim(),
+      foto: rewardFoto.trim(),
+      biaya_koin: rewardBiayaKoin,
+      stok: rewardStok,
+      aktif: rewardAktif,
+    });
+    setIsRewardModalOpen(false);
   };
 
   const handleProductSubmit = async (e: React.FormEvent) => {
@@ -1297,7 +1389,7 @@ Aturan Penulisan:
 
       {/* Tabs */}
       <div className="flex items-center gap-1.5 overflow-x-auto border-b border-slate-200 pb-2 mb-6 text-xs font-bold">
-        {(['dashboard', 'produk', 'kategori', 'pesanan', 'promo', 'pengaturan'] as const).map((tab) => (
+        {(['dashboard', 'produk', 'kategori', 'pesanan', 'promo', 'hadiah', 'pengaturan'] as const).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -2094,6 +2186,140 @@ Aturan Penulisan:
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View: Hadiah (Koin & Penukaran) */}
+      {adminTab === 'hadiah' && (
+        <div className="space-y-6">
+          <div className="space-y-3 pt-4">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-slate-800 text-sm">Katalog Hadiah Penukaran Koin</h3>
+              <button
+                type="button"
+                onClick={handleOpenAddReward}
+                className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 shadow-md"
+              >
+                <Plus className="w-4 h-4" /> Tambah Hadiah
+              </button>
+            </div>
+            <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-xs">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase font-bold text-[10px] tracking-wider">
+                  <tr>
+                    <th className="p-4">Hadiah</th>
+                    <th className="p-4">Biaya Koin</th>
+                    <th className="p-4">Stok</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4 text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rewards.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-slate-400 font-semibold">
+                        Belum ada hadiah. Klik "Tambah Hadiah" untuk membuat yang pertama.
+                      </td>
+                    </tr>
+                  ) : (
+                    rewards.map((r) => (
+                      <tr key={r.id} className="hover:bg-slate-50 transition">
+                        <td className="p-4 flex items-center gap-2.5">
+                          <img
+                            src={r.foto || 'https://placehold.co/100x100/e2e8f0/64748b?text=Hadiah'}
+                            className="w-9 h-9 rounded-lg object-cover border border-slate-100"
+                            alt={r.nama_hadiah}
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = 'https://placehold.co/100x100/e2e8f0/64748b?text=Hadiah';
+                            }}
+                          />
+                          <span className="font-extrabold text-slate-800">{r.nama_hadiah}</span>
+                        </td>
+                        <td className="p-4 font-bold text-amber-600">{r.biaya_koin} koin</td>
+                        <td className="p-4 font-bold text-slate-600">{r.stok}</td>
+                        <td className="p-4">
+                          <span
+                            className={`text-[10px] font-black px-2 py-1 rounded-full ${
+                              r.aktif ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'
+                            }`}
+                          >
+                            {r.aktif ? 'Aktif' : 'Nonaktif'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right space-x-3">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditReward(r)}
+                            className="text-emerald-600 hover:underline font-bold"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteReward(r.id)}
+                            className="text-red-500 hover:underline font-bold"
+                          >
+                            Hapus
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="space-y-3 pt-6 border-t border-slate-100">
+            <h3 className="font-bold text-slate-800 text-sm">Riwayat Penukaran Koin Pelanggan</h3>
+            <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-xs">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase font-bold text-[10px] tracking-wider">
+                  <tr>
+                    <th className="p-4">Hadiah</th>
+                    <th className="p-4">Koin Terpakai</th>
+                    <th className="p-4">Tanggal</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4 text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {redemptions.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-slate-400 font-semibold">
+                        Belum ada pelanggan yang menukar koin.
+                      </td>
+                    </tr>
+                  ) : (
+                    redemptions.map((rd) => (
+                      <tr key={rd.id} className="hover:bg-slate-50 transition">
+                        <td className="p-4 font-extrabold text-slate-800">{rd.nama_hadiah}</td>
+                        <td className="p-4 font-bold text-amber-600">-{rd.koin_terpakai} koin</td>
+                        <td className="p-4 text-[10px] text-slate-500 font-semibold">
+                          {rd.created_at ? new Date(rd.created_at).toLocaleDateString('id-ID') : '-'}
+                        </td>
+                        <td className="p-4">
+                          <select
+                            value={rd.status}
+                            onChange={(e) => onUpdateRedemptionStatus(rd.id, e.target.value as any)}
+                            className="text-[10px] font-bold border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+                          >
+                            <option value="Menunggu">Menunggu</option>
+                            <option value="Diproses">Diproses</option>
+                            <option value="Terkirim">Terkirim</option>
+                            <option value="Dibatalkan">Dibatalkan</option>
+                          </select>
+                        </td>
+                        <td className="p-4 text-right text-[10px] text-slate-400">
+                          {rd.user_id.slice(0, 8)}...
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2960,6 +3186,112 @@ Aturan Penulisan:
                 className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2.5 rounded-xl transition uppercase tracking-wider"
               >
                 Aktifkan Kampanye Promo
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL TAMBAH/EDIT HADIAH */}
+      {isRewardModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl w-full max-w-md p-6 space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h4 className="font-bold text-slate-800 text-base">
+                {editingRewardId ? 'Edit Hadiah' : 'Tambah Hadiah Baru'}
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsRewardModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleRewardSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-400 mb-1">Nama Hadiah</label>
+                <input
+                  type="text"
+                  required
+                  value={rewardNama}
+                  onChange={(e) => setRewardNama(e.target.value)}
+                  placeholder="Contoh: Payung Cantik ASYIFA MART"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50"
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-slate-400 mb-1">Deskripsi (opsional)</label>
+                <textarea
+                  rows={2}
+                  value={rewardDeskripsi}
+                  onChange={(e) => setRewardDeskripsi(e.target.value)}
+                  placeholder="Keterangan singkat hadiah"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 resize-none"
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-slate-400 mb-1">Foto Hadiah</label>
+                <div className="flex items-center gap-3">
+                  {rewardFoto && (
+                    <img
+                      src={rewardFoto}
+                      className="w-14 h-14 rounded-xl object-cover border border-slate-200"
+                      alt="Preview"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://placehold.co/100x100/e2e8f0/64748b?text=Hadiah';
+                      }}
+                    />
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleImageUpload(e, setRewardFoto)}
+                    className="flex-1 text-[10px] text-slate-500"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-400 mb-1">Biaya Koin (min. 100)</label>
+                  <input
+                    type="number"
+                    required
+                    min={100}
+                    value={rewardBiayaKoin}
+                    onChange={(e) => setRewardBiayaKoin(parseInt(e.target.value) || 0)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-400 mb-1">Stok Hadiah</label>
+                  <input
+                    type="number"
+                    required
+                    min={0}
+                    value={rewardStok}
+                    onChange={(e) => setRewardStok(parseInt(e.target.value) || 0)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="reward_aktif"
+                  checked={rewardAktif}
+                  onChange={(e) => setRewardAktif(e.target.checked)}
+                  className="rounded text-emerald-500 focus:ring-emerald-500 w-3.5 h-3.5"
+                />
+                <label htmlFor="reward_aktif" className="font-bold text-slate-600 cursor-pointer">
+                  Tampilkan hadiah ini ke pelanggan
+                </label>
+              </div>
+              <button
+                type="submit"
+                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2.5 rounded-xl transition uppercase tracking-wider"
+              >
+                {editingRewardId ? 'Simpan Perubahan' : 'Tambahkan Hadiah'}
               </button>
             </form>
           </div>
