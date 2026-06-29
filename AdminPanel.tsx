@@ -45,6 +45,7 @@ import {
 } from '../types';
 import { supabase } from '../supabaseClient';
 import { isVariantOfProduct, getProductId } from '../utils';
+import { MINIMAL_KOIN_TUKAR } from '../constants';
 import { defaultCategories } from '../seedData';
 import { buildReceiptEscPos } from '../printer/escpos';
 import { connectQzTray, listPrinters, printRawEscPos } from '../printer/qzTray';
@@ -911,7 +912,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [rewardNama, setRewardNama] = useState('');
   const [rewardDeskripsi, setRewardDeskripsi] = useState('');
   const [rewardFoto, setRewardFoto] = useState('');
-  const [rewardBiayaKoin, setRewardBiayaKoin] = useState(100);
+  const [rewardBiayaKoin, setRewardBiayaKoin] = useState(MINIMAL_KOIN_TUKAR);
   const [rewardStok, setRewardStok] = useState(0);
   const [rewardAktif, setRewardAktif] = useState(true);
 
@@ -1223,7 +1224,7 @@ Aturan Penulisan:
     setRewardNama('');
     setRewardDeskripsi('');
     setRewardFoto('');
-    setRewardBiayaKoin(100);
+    setRewardBiayaKoin(MINIMAL_KOIN_TUKAR);
     setRewardStok(0);
     setRewardAktif(true);
     setIsRewardModalOpen(true);
@@ -3253,11 +3254,11 @@ Aturan Penulisan:
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-400 mb-1">Biaya Koin (min. 100)</label>
+                  <label className="block font-bold text-slate-400 mb-1">Biaya Koin (min. {MINIMAL_KOIN_TUKAR})</label>
                   <input
                     type="number"
                     required
-                    min={100}
+                    min={MINIMAL_KOIN_TUKAR}
                     value={rewardBiayaKoin}
                     onChange={(e) => setRewardBiayaKoin(parseInt(e.target.value) || 0)}
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50"

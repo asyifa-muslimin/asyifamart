@@ -1,6 +1,7 @@
 import React from 'react';
 import { Coins, Gift, PackageX, Clock, CheckCircle2, Truck, XCircle } from 'lucide-react';
 import { Reward, RewardRedemption, User } from '../types';
+import { MINIMAL_KOIN_TUKAR } from '../constants';
 
 interface RewardsPageProps {
   currentUser: User | null;
@@ -9,8 +10,6 @@ interface RewardsPageProps {
   onRedeem: (reward: Reward) => void;
   onBackToHome: () => void;
 }
-
-const MINIMAL_KOIN_TUKAR = 100;
 
 const formatRupiah = (num: number) => new Intl.NumberFormat('id-ID').format(num);
 

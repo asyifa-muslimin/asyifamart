@@ -67,6 +67,7 @@ import { isVariantOfProduct, getProductId, getVariantProductId, safeSetLocalStor
 import { AdminPanel } from './components/AdminPanel';
 import { buildReceiptEscPos } from './printer/escpos';
 import { printRawEscPos, isQzConnected } from './printer/qzTray';
+import { MINIMAL_KOIN_TUKAR } from './constants';
 
 export default function App() {
   // Navigation & Page State
@@ -1564,8 +1565,8 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ðŸª
     stok: number;
     aktif: boolean;
   }) => {
-    if (rewardData.biaya_koin < 100) {
-      showToast('Biaya koin minimal 100 koin per aturan penukaran.', 'warning');
+    if (rewardData.biaya_koin < MINIMAL_KOIN_TUKAR) {
+      showToast(`Biaya koin minimal ${MINIMAL_KOIN_TUKAR} koin per aturan penukaran.`, 'warning');
       return;
     }
 
@@ -1700,8 +1701,8 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ðŸª
       return;
     }
 
-    if (reward.biaya_koin < 100) {
-      showToast('Hadiah ini tidak memenuhi syarat minimal 100 koin.', 'error');
+    if (reward.biaya_koin < MINIMAL_KOIN_TUKAR) {
+      showToast(`Hadiah ini tidak memenuhi syarat minimal ${MINIMAL_KOIN_TUKAR} koin.`, 'error');
       return;
     }
 

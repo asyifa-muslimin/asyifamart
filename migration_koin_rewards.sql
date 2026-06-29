@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS rewards (
     nama_hadiah VARCHAR(255) NOT NULL,
     deskripsi TEXT,
     foto TEXT,
-    biaya_koin INTEGER NOT NULL CHECK (biaya_koin >= 100), -- minimal 100 koin per aturan
+    biaya_koin INTEGER NOT NULL CHECK (biaya_koin >= 25), -- minimal 25 koin per aturan
     stok INTEGER NOT NULL DEFAULT 0,
     aktif BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
