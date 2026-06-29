@@ -21,6 +21,7 @@ import {
   ShoppingBag,
   Download,
   Smartphone,
+  Coins,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from './supabaseClient';
@@ -36,6 +37,8 @@ import {
   OrderItem,
   WishlistItem,
   CartItem,
+  Reward,
+  RewardRedemption,
 } from './types';
 import {
   defaultStoreSettings,
@@ -55,6 +58,7 @@ import {
 } from './seedCache';
 import { ProductCard } from './components/ProductCard';
 import { WishlistPage } from './components/WishlistPage';
+import { RewardsPage } from './components/RewardsPage';
 import { ProductDetailPage } from './components/ProductDetailPage';
 import { CartPage } from './components/CartPage';
 import { OrderHistory } from './components/OrderHistory';
@@ -66,7 +70,7 @@ import { printRawEscPos, isQzConnected } from './printer/qzTray';
 
 export default function App() {
   // Navigation & Page State
-  const [currentPage, setCurrentPage] = useState<'home' | 'detail' | 'cart' | 'wishlist' | 'profile' | 'orders' | 'admin'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'detail' | 'cart' | 'wishlist' | 'profile' | 'orders' | 'admin' | 'rewards'>('home');
   const [activeDetailProductId, setActiveDetailProductId] = useState<number | null>(null);
 
   // Connection & Database Mode States
@@ -81,6 +85,8 @@ export default function App() {
   const [variants, setVariants] = useState<ProductVariant[]>(defaultVariants);
   const [banners, setBanners] = useState<Banner[]>(defaultBanners);
   const [promos, setPromos] = useState<Promo[]>(defaultPromos);
+  const [rewards, setRewards] = useState<Reward[]>([]);
+  const [redemptions, setRedemptions] = useState<RewardRedemption[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrderForPrint, setSelectedOrderForPrint] = useState<Order | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -329,8 +335,10 @@ export default function App() {
   useEffect(() => {
     if (currentUser) {
       loadUserOrders();
+      loadRedemptions();
     } else {
       setOrders([]);
+      setRedemptions([]);
     }
   }, [currentUser, useLocalEmulation, isOnline, isOfflineBackupActive]);
 
@@ -515,9 +523,20 @@ export default function App() {
     }
   };
 
+  const syncRewardsTable = async () => {
+    const { data: rws } = await supabase
+      .from('rewards')
+      .select('id, nama_hadiah, deskripsi, foto, biaya_koin, stok, aktif, created_at')
+      .order('biaya_koin', { ascending: true });
+    if (rws) {
+      setRewards(rws as any);
+      safeSetLocalStorage('emulated_rewards', rws);
+    }
+  };
+
   const silentSync = async () => {
     try {
-      // Jalankan keenam sync tabel secara PARALEL (bukan berurutan dengan
+      // Jalankan sync tabel secara PARALEL (bukan berurutan dengan
       // await satu-per-satu) supaya total waktu = waktu query paling lambat,
       // bukan akumulasi seluruh query.
       await Promise.all([
@@ -527,6 +546,7 @@ export default function App() {
         syncVariantsTable(),
         syncBannersTable(),
         syncPromosTable(),
+        syncRewardsTable(),
       ]);
 
       const nowStr = new Date().toLocaleString('id-ID');
@@ -575,6 +595,9 @@ export default function App() {
 
     if (cachedPromos) setPromos(JSON.parse(cachedPromos));
     else setPromos(seedCachePromos.length > 0 ? seedCachePromos : defaultPromos);
+
+    const cachedRewards = localStorage.getItem('emulated_rewards');
+    if (cachedRewards) setRewards(JSON.parse(cachedRewards));
 
     return hasCache;
   };
@@ -657,6 +680,11 @@ export default function App() {
     if (page === 'orders' && !currentUser) {
       navigate('profile');
       showToast('Silakan login terlebih dahulu untuk mengakses riwayat pesanan.', 'info');
+      return;
+    }
+    if (page === 'rewards' && !currentUser) {
+      navigate('profile');
+      showToast('Silakan login terlebih dahulu untuk melihat koin & hadiah Anda.', 'info');
       return;
     }
     if (page === 'admin' && (!currentUser || currentUser.role !== 'admin')) {
@@ -769,6 +797,12 @@ export default function App() {
     const kodeOrder = "ASYIFA-" + Math.floor(100000 + Math.random() * 900000);
     const fullAlamat = checkoutData.mapsUrl ? `${checkoutData.alamat}\n📍 Maps Link: ${checkoutData.mapsUrl}` : checkoutData.alamat;
 
+    // Koin loyalitas: 1 koin per kelipatan Rp35.000 dari SUBTOTAL belanja
+    // (ongkos kirim tidak dihitung, supaya jarak pengantaran tidak mempengaruhi
+    // perolehan koin). Dibulatkan ke bawah -- belanja Rp99.000 = 2 koin, bukan 3.
+    const KOIN_PER_RUPIAH = 35000;
+    const koinDiperoleh = Math.floor(subtotalPrice / KOIN_PER_RUPIAH);
+
     // If logged in, record the transaction in the database
     if (currentUser) {
       if (useLocalEmulation) {
@@ -783,6 +817,7 @@ export default function App() {
           whatsapp_pembeli: checkoutData.wa,
           alamat: fullAlamat,
           catatan: checkoutData.catatan,
+          koin_diperoleh: koinDiperoleh,
           created_at: new Date().toISOString(),
           items: cart.map(item => {
             const variant = variants.find(v => v.id === item.variant_id);
@@ -799,6 +834,13 @@ export default function App() {
         const updatedOrders = [newOrder, ...cachedOrders];
         localStorage.setItem('emulated_orders', JSON.stringify(updatedOrders));
         setOrders(updatedOrders.filter((o) => o.user_id === currentUser.id));
+
+        // Tambahkan koin ke saldo user (emulasi lokal).
+        if (koinDiperoleh > 0) {
+          const updatedUser = { ...currentUser, koin: (currentUser.koin || 0) + koinDiperoleh };
+          setCurrentUser(updatedUser);
+          localStorage.setItem('asyifa_user', JSON.stringify(updatedUser));
+        }
       } else {
         try {
           const { data: newOrder, error } = await supabase
@@ -812,6 +854,7 @@ export default function App() {
               whatsapp_pembeli: checkoutData.wa,
               alamat: fullAlamat,
               catatan: checkoutData.catatan,
+              koin_diperoleh: koinDiperoleh,
             })
             .select();
 
@@ -829,6 +872,24 @@ export default function App() {
                   harga: harga,
                 });
               }
+            }
+          }
+
+          // Tambahkan koin ke saldo user di database, lalu sinkronkan ke state
+          // lokal supaya saldo yang tampil ke pengguna langsung ter-update.
+          if (koinDiperoleh > 0) {
+            const newKoinTotal = (currentUser.koin || 0) + koinDiperoleh;
+            const { error: koinError } = await supabase
+              .from('users')
+              .update({ koin: newKoinTotal })
+              .eq('id', currentUser.id);
+
+            if (!koinError) {
+              const updatedUser = { ...currentUser, koin: newKoinTotal };
+              setCurrentUser(updatedUser);
+              localStorage.setItem('asyifa_user', JSON.stringify(updatedUser));
+            } else {
+              console.error('Gagal menambah koin:', koinError);
             }
           }
         } catch (err: any) {
@@ -854,7 +915,7 @@ Subtotal: Rp ${new Intl.NumberFormat('id-ID').format(subtotalPrice)}
 Jarak Pengantaran: ${checkoutData.distance > 0 ? `${checkoutData.distance.toFixed(2)} Km` : '-'}
 Ongkos Kirim: ${checkoutData.ongkir > 0 ? `Rp ${new Intl.NumberFormat('id-ID').format(checkoutData.ongkir)}` : 'Gratis'}
 Total Bayar: Rp ${new Intl.NumberFormat('id-ID').format(grandTotal)}
-Catatan: ${checkoutData.catatan}
+${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin 🪙\n` : ''}Catatan: ${checkoutData.catatan}
 ━━━━━━━━━━━━━━`;
 
     const whatsappNumber = storeSettings.whatsapp.replace(/[^0-9]/g, '');
@@ -865,7 +926,11 @@ Catatan: ${checkoutData.catatan}
     localStorage.removeItem('asyifa_cart');
 
     window.open(waUrl, '_blank');
-    showToast('Pesanan berhasil dibuat! Dialihkan ke WhatsApp kurir...', 'success');
+    if (currentUser && koinDiperoleh > 0) {
+      showToast(`Pesanan berhasil dibuat! Anda mendapat ${koinDiperoleh} koin 🪙`, 'success');
+    } else {
+      showToast('Pesanan berhasil dibuat! Dialihkan ke WhatsApp kurir...', 'success');
+    }
     setCurrentPage('home');
   };
 
@@ -1487,6 +1552,260 @@ Catatan: ${checkoutData.catatan}
     });
   };
 
+  // --- KOIN & HADIAH (Loyalty Program) ---
+
+  // Admin: tambah/edit hadiah yang bisa ditukar koin.
+  const handleSaveReward = async (rewardData: {
+    id?: number;
+    nama_hadiah: string;
+    deskripsi: string;
+    foto: string;
+    biaya_koin: number;
+    stok: number;
+    aktif: boolean;
+  }) => {
+    if (rewardData.biaya_koin < 100) {
+      showToast('Biaya koin minimal 100 koin per aturan penukaran.', 'warning');
+      return;
+    }
+
+    if (useLocalEmulation) {
+      let updated: Reward[];
+      if (rewardData.id) {
+        updated = rewards.map((r) => (r.id === rewardData.id ? { ...r, ...rewardData } : r));
+      } else {
+        const newReward: Reward = {
+          id: Math.floor(Date.now() + Math.random() * 100000),
+          nama_hadiah: rewardData.nama_hadiah,
+          deskripsi: rewardData.deskripsi,
+          foto: rewardData.foto,
+          biaya_koin: rewardData.biaya_koin,
+          stok: rewardData.stok,
+          aktif: rewardData.aktif,
+          created_at: new Date().toISOString(),
+        };
+        updated = [...rewards, newReward];
+      }
+      safeSetLocalStorage('emulated_rewards', updated);
+      setRewards(updated);
+      showToast('Hadiah berhasil disimpan secara lokal!', 'success');
+      return;
+    }
+
+    try {
+      if (rewardData.id) {
+        const { error } = await supabase
+          .from('rewards')
+          .update({
+            nama_hadiah: rewardData.nama_hadiah,
+            deskripsi: rewardData.deskripsi,
+            foto: rewardData.foto,
+            biaya_koin: rewardData.biaya_koin,
+            stok: rewardData.stok,
+            aktif: rewardData.aktif,
+          })
+          .eq('id', rewardData.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('rewards').insert({
+          nama_hadiah: rewardData.nama_hadiah,
+          deskripsi: rewardData.deskripsi,
+          foto: rewardData.foto,
+          biaya_koin: rewardData.biaya_koin,
+          stok: rewardData.stok,
+          aktif: rewardData.aktif,
+        });
+        if (error) throw error;
+      }
+      showToast('Hadiah berhasil disimpan ke cloud!', 'success');
+      syncData();
+    } catch (err: any) {
+      showToast(`Gagal menyimpan hadiah: ${err.message}`, 'error');
+    }
+  };
+
+  const handleDeleteReward = async (id: number) => {
+    showConfirm('Hapus Hadiah', 'Yakin ingin menghapus hadiah ini dari katalog penukaran?', async () => {
+      if (useLocalEmulation) {
+        const updated = rewards.filter((r) => r.id !== id);
+        safeSetLocalStorage('emulated_rewards', updated);
+        setRewards(updated);
+        showToast('Hadiah dihapus secara lokal.', 'success');
+        return;
+      }
+
+      try {
+        const { error } = await supabase.from('rewards').delete().eq('id', id);
+        if (error) throw error;
+        showToast('Hadiah berhasil dihapus dari cloud!', 'success');
+        syncData();
+      } catch (err: any) {
+        showToast('Gagal menghapus hadiah.', 'error');
+      }
+    });
+  };
+
+  // Admin: lihat & ubah status penukaran (Menunggu -> Diproses -> Terkirim).
+  const loadRedemptions = async () => {
+    if (!currentUser) return;
+    if (useLocalEmulation) {
+      const cached = JSON.parse(localStorage.getItem('emulated_redemptions') || '[]') as RewardRedemption[];
+      if (currentUser.role === 'admin') setRedemptions(cached);
+      else setRedemptions(cached.filter((r) => r.user_id === currentUser.id));
+      return;
+    }
+
+    try {
+      let query = supabase.from('reward_redemptions').select('*').order('id', { ascending: false });
+      if (currentUser.role !== 'admin') {
+        query = query.eq('user_id', currentUser.id);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      if (data) setRedemptions(data as any);
+    } catch (err) {
+      console.error('Gagal memuat riwayat penukaran:', err);
+    }
+  };
+
+  const handleUpdateRedemptionStatus = async (redemptionId: number, status: RewardRedemption['status']) => {
+    if (useLocalEmulation) {
+      const cached = JSON.parse(localStorage.getItem('emulated_redemptions') || '[]') as RewardRedemption[];
+      const updated = cached.map((r) => (r.id === redemptionId ? { ...r, status } : r));
+      localStorage.setItem('emulated_redemptions', JSON.stringify(updated));
+      setRedemptions(updated);
+      showToast(`Status penukaran diubah menjadi ${status}.`, 'success');
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from('reward_redemptions').update({ status }).eq('id', redemptionId);
+      if (error) throw error;
+      showToast(`Status penukaran diubah menjadi ${status}.`, 'success');
+      loadRedemptions();
+    } catch (err: any) {
+      showToast('Gagal mengubah status penukaran.', 'error');
+    }
+  };
+
+  // Pelanggan: tukar koin jadi hadiah. Ini titik PALING PENTING untuk dijaga
+  // konsistensinya -- validasi saldo koin & minimal 100 koin dilakukan di sini
+  // (bukan cuma di UI), supaya tidak bisa "dicurangi" lewat manipulasi state
+  // di browser. Untuk keamanan tambahan jangka panjang, idealnya ini pindah
+  // ke database function/RPC -- untuk sekarang divalidasi di kode klien
+  // dengan saldo TERBARU yang diambil ulang dari server sebelum memotong koin.
+  const handleRedeemReward = async (reward: Reward) => {
+    if (!currentUser) {
+      showToast('Silakan masuk akun terlebih dahulu untuk menukar koin.', 'warning');
+      return;
+    }
+
+    if (reward.biaya_koin < 100) {
+      showToast('Hadiah ini tidak memenuhi syarat minimal 100 koin.', 'error');
+      return;
+    }
+
+    if (useLocalEmulation) {
+      const saldoSekarang = currentUser.koin || 0;
+      if (saldoSekarang < reward.biaya_koin) {
+        showToast(`Koin tidak cukup. Saldo Anda ${saldoSekarang}, dibutuhkan ${reward.biaya_koin}.`, 'warning');
+        return;
+      }
+      if (reward.stok <= 0) {
+        showToast('Stok hadiah ini sudah habis.', 'warning');
+        return;
+      }
+
+      const updatedUser = { ...currentUser, koin: saldoSekarang - reward.biaya_koin };
+      setCurrentUser(updatedUser);
+      localStorage.setItem('asyifa_user', JSON.stringify(updatedUser));
+
+      const updatedRewards = rewards.map((r) => (r.id === reward.id ? { ...r, stok: r.stok - 1 } : r));
+      safeSetLocalStorage('emulated_rewards', updatedRewards);
+      setRewards(updatedRewards);
+
+      const newRedemption: RewardRedemption = {
+        id: Math.floor(Date.now() + Math.random() * 100000),
+        user_id: currentUser.id,
+        reward_id: reward.id,
+        nama_hadiah: reward.nama_hadiah,
+        koin_terpakai: reward.biaya_koin,
+        status: 'Menunggu',
+        created_at: new Date().toISOString(),
+      };
+      const cached = JSON.parse(localStorage.getItem('emulated_redemptions') || '[]') as RewardRedemption[];
+      const updatedRedemptions = [newRedemption, ...cached];
+      localStorage.setItem('emulated_redemptions', JSON.stringify(updatedRedemptions));
+      setRedemptions(updatedRedemptions.filter((r) => r.user_id === currentUser.id));
+
+      showToast(`Berhasil menukar ${reward.biaya_koin} koin untuk ${reward.nama_hadiah}!`, 'success');
+      return;
+    }
+
+    try {
+      // Ambil ulang saldo koin & stok TERBARU langsung dari server (bukan dari
+      // state lokal yang mungkin sudah usang) sebelum memutuskan boleh tukar
+      // atau tidak -- mencegah penukaran ganda dari banyak tab/perangkat.
+      const { data: freshUser, error: userErr } = await supabase
+        .from('users')
+        .select('koin')
+        .eq('id', currentUser.id)
+        .single();
+      if (userErr) throw userErr;
+
+      const saldoSekarang = freshUser?.koin || 0;
+      if (saldoSekarang < reward.biaya_koin) {
+        showToast(`Koin tidak cukup. Saldo Anda ${saldoSekarang}, dibutuhkan ${reward.biaya_koin}.`, 'warning');
+        return;
+      }
+
+      const { data: freshReward, error: rewardErr } = await supabase
+        .from('rewards')
+        .select('stok, aktif')
+        .eq('id', reward.id)
+        .single();
+      if (rewardErr) throw rewardErr;
+
+      if (!freshReward?.aktif || (freshReward?.stok ?? 0) <= 0) {
+        showToast('Hadiah ini sudah tidak tersedia.', 'warning');
+        syncData();
+        return;
+      }
+
+      const newKoinTotal = saldoSekarang - reward.biaya_koin;
+      const { error: koinError } = await supabase
+        .from('users')
+        .update({ koin: newKoinTotal })
+        .eq('id', currentUser.id);
+      if (koinError) throw koinError;
+
+      await supabase
+        .from('rewards')
+        .update({ stok: freshReward.stok - 1 })
+        .eq('id', reward.id);
+
+      const { error: redemptionError } = await supabase.from('reward_redemptions').insert({
+        user_id: currentUser.id,
+        reward_id: reward.id,
+        nama_hadiah: reward.nama_hadiah,
+        koin_terpakai: reward.biaya_koin,
+        status: 'Menunggu',
+      });
+      if (redemptionError) throw redemptionError;
+
+      const updatedUser = { ...currentUser, koin: newKoinTotal };
+      setCurrentUser(updatedUser);
+      localStorage.setItem('asyifa_user', JSON.stringify(updatedUser));
+
+      showToast(`Berhasil menukar ${reward.biaya_koin} koin untuk ${reward.nama_hadiah}!`, 'success');
+      syncData();
+      loadRedemptions();
+    } catch (err: any) {
+      console.error('Gagal menukar koin:', err);
+      showToast(`Gagal menukar koin: ${err.message}`, 'error');
+    }
+  };
+
   const handleDownloadServiceWorker = () => {
     const content = `const CACHE_NAME = 'asyifa-mart-v1';
 const ASSETS = [
@@ -1721,6 +2040,18 @@ self.addEventListener('fetch', event => {
                       className="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                     >
                       <Receipt className="w-4 h-4 text-slate-400" /> Riwayat Pesanan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigate('rewards')}
+                      className="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      <Coins className="w-4 h-4 text-amber-500" /> Koin & Hadiah
+                      {currentUser && (currentUser.koin || 0) > 0 && (
+                        <span className="ml-auto bg-amber-100 text-amber-700 text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                          {currentUser.koin}
+                        </span>
+                      )}
                     </button>
                     {currentUser?.role === 'admin' && (
                       <button
@@ -1985,6 +2316,24 @@ self.addEventListener('fetch', event => {
             </motion.section>
           )}
 
+          {/* PAGE: REWARDS (Koin & Hadiah) */}
+          {currentPage === 'rewards' && (
+            <motion.section
+              key="rewards"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <RewardsPage
+                currentUser={currentUser}
+                rewards={rewards}
+                redemptions={redemptions}
+                onRedeem={handleRedeemReward}
+                onBackToHome={() => navigate('home')}
+              />
+            </motion.section>
+          )}
+
           {/* PAGE: CART */}
           {currentPage === 'cart' && (
             <motion.section
@@ -2105,6 +2454,8 @@ self.addEventListener('fetch', event => {
                 orders={orders}
                 banners={banners}
                 promos={promos}
+                rewards={rewards}
+                redemptions={redemptions}
                 storeSettings={storeSettings}
                 variants={variants}
                 useLocalEmulation={useLocalEmulation}
@@ -2120,6 +2471,9 @@ self.addEventListener('fetch', event => {
                 onDeleteBanner={handleDeleteBanner}
                 onAddPromo={handleAddPromo}
                 onDeletePromo={handleDeletePromo}
+                onSaveReward={handleSaveReward}
+                onDeleteReward={handleDeleteReward}
+                onUpdateRedemptionStatus={handleUpdateRedemptionStatus}
                 onDownloadServiceWorker={handleDownloadServiceWorker}
                 showToast={showToast}
               />
