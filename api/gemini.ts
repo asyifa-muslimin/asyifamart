@@ -2,22 +2,16 @@
 //
 // Vercel Serverless Function — menggantikan route Express /api/gemini yang
 // sebelumnya ada di server.ts. Express custom server seperti itu TIDAK
-// otomatis berjalan di Vercel (platform serverless, beda model dari hosting
-// Node.js biasa seperti Cloud Run/Railway yang menjalankan server.ts terus-
-// menerus). Vercel mengenali file di folder /api/ sebagai endpoint otomatis:
-// file ini akan diakses sebagai /api/gemini, persis seperti yang dipanggil
-// dari AdminPanel.tsx.
+// otomatis berjalan di Vercel (platform serverless).
 //
-// PENTING: runtime dipaksa ke 'nodejs', BUKAN Edge Runtime. Tanpa ini, Vercel
-// bisa menjalankan handler dengan signature Request/Response di Edge Runtime
-// secara default -- dan @google/genai bergantung pada modul internal Node.js
-// yang tidak didukung di Edge Runtime. Itu menyebabkan function gagal start
-// secara diam-diam (request menggantung tanpa respons sama sekali, bukan
-// error yang jelas), bukannya error yang mudah didiagnosa.
-export const config = {
-  runtime: 'nodejs',
-};
+// CATATAN PERBAIKAN: versi sebelumnya pakai format "Web Handler"
+// (Request/Response Web API standar) dan terbukti hang 5 menit tanpa
+// outgoing request sama sekali (dikonfirmasi lewat Vercel Function Logs).
+// Diganti ke format Node.js klasik (VercelRequest/VercelResponse dari
+// @vercel/node) yang jauh lebih battle-tested dan sudah dipakai puluhan
+// ribu project Vercel selama bertahun-tahun.
 
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
 let aiClient: InstanceType<typeof GoogleGenAI> | null = null;
@@ -28,71 +22,55 @@ function getGeminiClient() {
     throw new Error('GEMINI_API_KEY belum dikonfigurasi. Tambahkan di Vercel Dashboard > Project Settings > Environment Variables.');
   }
   if (!aiClient) {
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'asyifamart-vercel',
-        },
-      },
-    });
+    aiClient = new GoogleGenAI({ apiKey });
   }
   return aiClient;
 }
 
 // Model-model yang dicoba berurutan: yang pertama paling diinginkan, fallback
-// ke yang berikutnya kalau gagal/sibuk. Daftar ini sama dengan yang sudah ada
-// di server.ts sebelumnya.
+// ke yang berikutnya kalau gagal/sibuk.
 const MODELS_TO_TRY = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
 
-export default async function handler(request: Request): Promise<Response> {
-  if (request.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json', Allow: 'POST' },
-    });
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  console.log('[api/gemini] Handler invoked, method:', req.method);
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  let body: { prompt?: string; systemInstruction?: string };
-  try {
-    body = await request.json();
-  } catch {
-    return new Response(JSON.stringify({ error: 'Body request tidak valid (harus JSON).' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  const { prompt, systemInstruction } = req.body || {};
 
-  const { prompt, systemInstruction } = body;
+  if (!prompt) {
+    return res.status(400).json({ error: "Field 'prompt' wajib diisi di body request." });
+  }
 
   let ai: ReturnType<typeof getGeminiClient>;
   try {
     ai = getGeminiClient();
+    console.log('[api/gemini] Gemini client initialized successfully.');
   } catch (err: any) {
-    console.error('Gemini initialization error:', err.message);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    console.error('[api/gemini] Gemini initialization error:', err.message);
+    return res.status(500).json({ error: err.message });
   }
 
   let lastError: any = null;
   let textResult: string | undefined = undefined;
 
   for (const model of MODELS_TO_TRY) {
-    let attempts = 3;
-    let delay = 1000;
+    let attempts = 2;
+    let delay = 800;
 
     while (attempts > 0) {
       try {
-        console.log(`Calling Gemini API using model ${model} (attempts remaining: ${attempts})...`);
+        console.log(`[api/gemini] Calling model ${model} (attempts left: ${attempts})...`);
         const response = await ai.models.generateContent({
           model,
           contents: prompt,
-          config: {
-            systemInstruction,
-          },
+          config: systemInstruction ? { systemInstruction } : undefined,
         });
+
+        console.log(`[api/gemini] Got response from ${model}.`);
 
         if (response && response.text) {
           textResult = response.text;
@@ -101,10 +79,10 @@ export default async function handler(request: Request): Promise<Response> {
         throw new Error('Empty response from Gemini API');
       } catch (error: any) {
         lastError = error;
-        console.error(`Error with model ${model} (attempts remaining: ${attempts}):`, error);
+        console.error(`[api/gemini] Error with model ${model} (attempts left: ${attempts}):`, error?.message || error);
 
-        const errorMsg = String(error.message || '').toLowerCase();
-        const errorStatus = String(error.status || '');
+        const errorMsg = String(error?.message || '').toLowerCase();
+        const errorStatus = String(error?.status || '');
         const isTransient =
           errorStatus === 'UNAVAILABLE' ||
           errorMsg.includes('503') ||
@@ -117,7 +95,6 @@ export default async function handler(request: Request): Promise<Response> {
 
         attempts--;
         if (attempts > 0) {
-          console.log(`Waiting ${delay}ms before retrying model ${model}...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
           delay *= 1.5;
         }
@@ -128,16 +105,10 @@ export default async function handler(request: Request): Promise<Response> {
   }
 
   if (textResult !== undefined) {
-    return new Response(JSON.stringify({ text: textResult }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return res.status(200).json({ text: textResult });
   }
 
-  const errorDetails = lastError?.message || lastError || 'Gagal menghasilkan konten dari AI';
-  console.error('Gemini API Error after all fallbacks:', errorDetails);
-  return new Response(JSON.stringify({ error: errorDetails }), {
-    status: 500,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  const errorDetails = lastError?.message || String(lastError) || 'Gagal menghasilkan konten dari AI';
+  console.error('[api/gemini] All models failed:', errorDetails);
+  return res.status(500).json({ error: errorDetails });
 }
