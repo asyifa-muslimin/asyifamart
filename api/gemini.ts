@@ -8,8 +8,15 @@
 // file ini akan diakses sebagai /api/gemini, persis seperti yang dipanggil
 // dari AdminPanel.tsx.
 //
-// Format: Vercel Function "Web Handler" — menerima & mengembalikan objek
-// Request/Response standar Web API, tidak butuh tipe @vercel/node tambahan.
+// PENTING: runtime dipaksa ke 'nodejs', BUKAN Edge Runtime. Tanpa ini, Vercel
+// bisa menjalankan handler dengan signature Request/Response di Edge Runtime
+// secara default -- dan @google/genai bergantung pada modul internal Node.js
+// yang tidak didukung di Edge Runtime. Itu menyebabkan function gagal start
+// secara diam-diam (request menggantung tanpa respons sama sekali, bukan
+// error yang jelas), bukannya error yang mudah didiagnosa.
+export const config = {
+  runtime: 'nodejs',
+};
 
 import { GoogleGenAI } from '@google/genai';
 
