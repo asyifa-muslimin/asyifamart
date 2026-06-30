@@ -1497,10 +1497,10 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ğŸª
     }
   };
 
-  const handleAddBanner = async (newBanner: { judul: string; gambar: string }) => {
+  const handleAddBanner = async (newBanner: { judul: string; gambar: string; link?: string }) => {
     const id = Math.floor(Date.now() + Math.random() * 100000);
     if (useLocalEmulation) {
-      const updated = [...banners, { id, judul: newBanner.judul, gambar: newBanner.gambar, aktif: true }];
+      const updated = [...banners, { id, judul: newBanner.judul, gambar: newBanner.gambar, link: newBanner.link, aktif: true }];
       localStorage.setItem('emulated_banners', JSON.stringify(updated));
       setBanners(updated);
       showToast('Banner baru ditambahkan secara lokal!', 'success');
@@ -1511,6 +1511,7 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ğŸª
       const { error } = await supabase.from('banners').insert({
         judul: newBanner.judul,
         gambar: newBanner.gambar,
+        link: newBanner.link || null,
         aktif: true,
       });
       if (error) throw error;
@@ -2169,7 +2170,23 @@ self.addEventListener('fetch', event => {
             >
               {/* Promo Banners */}
               {banners.length > 0 && (
-                <div className="relative bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-3xl overflow-hidden shadow-xl min-h-[160px] md:min-h-[280px]">
+                <div
+                  onClick={() => {
+                    if (banners[0].link) {
+                      const linkedProductId = parseInt(banners[0].link, 10);
+                      const productExists = products.some((p) => getProductId(p) === linkedProductId);
+                      if (productExists) {
+                        setActiveDetailProductId(linkedProductId);
+                        navigate('detail');
+                      } else {
+                        showToast('Produk pada banner ini sudah tidak tersedia.', 'warning');
+                      }
+                    }
+                  }}
+                  className={`relative bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-3xl overflow-hidden shadow-xl min-h-[160px] md:min-h-[280px] ${
+                    banners[0].link ? 'cursor-pointer active:scale-[0.99] transition' : ''
+                  }`}
+                >
                   <div className="absolute inset-0 flex bg-cover bg-center" style={{ backgroundImage: `url(${banners[0].gambar})` }}>
                     <div className="absolute inset-0 bg-black/40 flex items-end p-6 md:p-12 text-white">
                       <div>
@@ -2180,7 +2197,7 @@ self.addEventListener('fetch', event => {
                           {banners[0].judul}
                         </h4>
                         <p className="text-[10px] md:text-sm text-slate-200 mt-1">
-                          Layanan cepat pesan langsung via kurir WhatsApp harian.
+                          {banners[0].link ? 'Ketuk untuk lihat produk promo ini' : 'Layanan cepat pesan langsung via kurir WhatsApp harian.'}
                         </p>
                       </div>
                     </div>
