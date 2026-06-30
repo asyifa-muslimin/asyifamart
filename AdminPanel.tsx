@@ -84,7 +84,7 @@ interface AdminPanelProps {
   }) => Promise<void>;
   onDeleteProduct: (id: number) => Promise<void>;
   onUpdateOrderStatus: (orderId: number, status: string) => Promise<void>;
-  onAddBanner: (banner: { judul: string; gambar: string }) => Promise<void>;
+  onAddBanner: (banner: { judul: string; gambar: string; link?: string }) => Promise<void>;
   onDeleteBanner: (id: number) => Promise<void>;
   onAddPromo: (promo: {
     nama_promo: string;
@@ -898,6 +898,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Banner Form States
   const [newBannerJudul, setNewBannerJudul] = useState('');
   const [newBannerGambar, setNewBannerGambar] = useState('');
+  const [newBannerProductId, setNewBannerProductId] = useState('');
 
   // Promo Form States
   const [promoName, setPromoName] = useState('');
@@ -1197,10 +1198,11 @@ Aturan Penulisan:
 
   const handleBannerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onAddBanner({ judul: newBannerJudul, gambar: newBannerGambar });
+    await onAddBanner({ judul: newBannerJudul, gambar: newBannerGambar, link: newBannerProductId || undefined });
     setIsBannerModalOpen(false);
     setNewBannerJudul('');
     setNewBannerGambar('');
+    setNewBannerProductId('');
   };
 
   const handlePromoSubmit = async (e: React.FormEvent) => {
@@ -1247,8 +1249,8 @@ Aturan Penulisan:
       showToast('Nama hadiah wajib diisi.', 'warning');
       return;
     }
-    if (rewardBiayaKoin < 100) {
-      showToast('Biaya koin minimal 100 koin.', 'warning');
+    if (rewardBiayaKoin < MINIMAL_KOIN_TUKAR) {
+      showToast(`Biaya koin minimal ${MINIMAL_KOIN_TUKAR} koin.`, 'warning');
       return;
     }
     await onSaveReward({
@@ -3099,6 +3101,31 @@ Aturan Penulisan:
                     />
                   </label>
                 </div>
+              </div>
+              <div>
+                <label className="block font-bold text-slate-400 mb-1">
+                  Produk Terkait (opsional)
+                </label>
+                <select
+                  value={newBannerProductId}
+                  onChange={(e) => setNewBannerProductId(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50"
+                >
+                  <option value="">-- Tidak ditautkan ke produk apa pun --</option>
+                  {products.map((p) => {
+                    const isPromo = variants.some(
+                      (v) => isVariantOfProduct(v, p) && v.harga_promo > 0
+                    );
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {isPromo ? '🔥 ' : ''}{p.nama_produk}
+                      </option>
+                    );
+                  })}
+                </select>
+                <p className="text-[9px] text-slate-400 mt-1">
+                  Kalau dipilih, pelanggan akan diarahkan ke halaman produk ini saat mengetuk banner. Produk bertanda 🔥 sedang ada harga promo.
+                </p>
               </div>
               <button
                 type="submit"
