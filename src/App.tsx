@@ -935,16 +935,16 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ðŸª
     setCurrentPage('home');
   };
 
-  const handleLogin = async (email: string, password: string) => {
+  const handleLogin = async (identifier: string, password: string) => {
     if (useLocalEmulation) {
       // Offline local auth
       const mockUser: User = {
         id: 'emulated-user-123',
-        nama: email.split('@')[0],
-        email: email,
-        whatsapp: '081234567890',
+        nama: identifier.includes('@') ? identifier.split('@')[0] : `User-${identifier}`,
+        email: identifier.includes('@') ? identifier : `user-${identifier}@asyifamart.com`,
+        whatsapp: identifier.includes('@') ? '081234567890' : identifier,
         alamat: 'Alamat Emulasi Lokal',
-        role: email.toLowerCase() === 'admin@asyifamart.com' ? 'admin' : 'pelanggan',
+        role: identifier.toLowerCase() === 'admin@asyifamart.com' ? 'admin' : 'pelanggan',
         created_at: new Date().toISOString(),
       };
       setCurrentUser(mockUser);
@@ -954,20 +954,62 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ðŸª
     }
 
     try {
-      // Masuk lewat Supabase Auth (email + password resmi), bukan lagi
-      // lookup manual ke tabel users tanpa password.
+      // Deteksi apakah input berupa email atau nomor HP.
+      // Kalau nomor HP: cari email yang terhubung di tabel users dulu,
+      // baru login Supabase Auth pakai email itu. Supabase Auth tidak
+      // mendukung login langsung dengan nomor HP tanpa SMS provider,
+      // jadi email tetap jadi identifier resmi di sisi Auth -- nomor HP
+      // hanya dipakai sebagai "jalur alternatif" untuk mencarinya.
+      const isEmail = identifier.includes('@');
+      let emailToLogin = identifier.trim().toLowerCase();
+
+      if (!isEmail) {
+        // Normalisasi nomor HP: hapus semua karakter non-angka,
+        // lalu coba beberapa format umum (0812..., 62812..., 812...).
+        const cleanPhone = identifier.replace(/[^0-9]/g, '');
+        const phoneVariants: string[] = [cleanPhone];
+        if (cleanPhone.startsWith('0')) {
+          phoneVariants.push('62' + cleanPhone.slice(1));
+        } else if (cleanPhone.startsWith('62')) {
+          phoneVariants.push('0' + cleanPhone.slice(2));
+        } else {
+          phoneVariants.push('0' + cleanPhone);
+          phoneVariants.push('62' + cleanPhone);
+        }
+
+        // Pakai RPC khusus (bukan query langsung ke tabel users), karena
+        // RLS membatasi SELECT ke baris milik sendiri saja -- yang
+        // mustahil dipenuhi sebelum login. RPC ini secara sengaja sempit:
+        // hanya mengembalikan email, tidak ada kolom lain yang bocor.
+        let foundEmail: string | null = null;
+        for (const variant of phoneVariants) {
+          const { data: emailResult, error: phoneErr } = await supabase.rpc('get_email_by_phone', {
+            phone_input: variant,
+          });
+          if (phoneErr) throw phoneErr;
+          if (emailResult) {
+            foundEmail = emailResult;
+            break;
+          }
+        }
+
+        if (!foundEmail) {
+          showToast('Nomor HP tidak ditemukan. Pastikan nomor yang Anda masukkan sudah terdaftar.', 'warning');
+          return;
+        }
+        emailToLogin = foundEmail;
+      }
+
+      // Login ke Supabase Auth pakai email + password.
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
+        email: emailToLogin,
         password,
       });
 
       if (authError) throw authError;
       if (!authData.user) throw new Error('Masuk gagal, sesi tidak terbentuk.');
 
-      // Ambil profil (nama, WA, alamat, role) dari tabel users berdasarkan id
-      // yang sama dengan id akun Auth ini. Pakai maybeSingle() (bukan single())
-      // supaya tidak melempar error mentah kalau baris belum/tidak ada --
-      // kita tangani sendiri di bawah dengan pesan yang jelas + auto-perbaikan.
+      // Ambil profil dari tabel users.
       const { data: profile, error: profileError } = await supabase
         .from('users')
         .select('*')
@@ -977,12 +1019,6 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ðŸª
       if (profileError) throw profileError;
 
       if (!profile) {
-        // Akun Auth valid, tapi baris profil di tabel `users` tidak ditemukan
-        // dengan id yang sama (bisa terjadi kalau akun pernah didaftarkan
-        // ulang dengan email yang sama sebelum dikonfirmasi, menghasilkan id
-        // Auth baru yang tidak nyambung dengan baris lama). Buat profil baru
-        // secara otomatis dari data Auth yang ada, supaya pengguna tidak
-        // macet tanpa bisa masuk sama sekali.
         const fallbackNama = authData.user.email?.split('@')[0] || 'Pengguna';
         const { data: created, error: createError } = await supabase
           .from('users')
@@ -1020,7 +1056,7 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ðŸª
     } catch (err: any) {
       const msg = String(err.message || '');
       if (msg.toLowerCase().includes('invalid login credentials')) {
-        showToast('Email atau kata sandi salah. Silakan periksa kembali.', 'error');
+        showToast('Email/No HP atau kata sandi salah. Silakan periksa kembali.', 'error');
       } else {
         showToast(`Masuk gagal: ${msg}`, 'error');
       }
@@ -1690,10 +1726,12 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ðŸª
   };
 
   // Pelanggan: tukar koin jadi hadiah. Ini titik PALING PENTING untuk dijaga
-  // konsistensinya -- validasi saldo koin & minimal 100 koin dilakukan di sini
-  // (bukan cuma di UI), supaya tidak bisa "dicurangi" lewat manipulasi state
-  // di browser. Untuk keamanan tambahan jangka panjang, idealnya ini pindah
-  // ke database function/RPC -- untuk sekarang divalidasi di kode klien
+  // konsistensinya -- validasi saldo koin & minimal MINIMAL_KOIN_TUKAR koin
+  // dilakukan di sini (bukan cuma di UI), supaya tidak bisa "dicurangi" lewat
+  // manipulasi state di browser. Untuk keamanan tambahan jangka panjang,
+  // idealnya ini pindah ke database function/RPC -- untuk sekarang divalidasi
+  // di kode klien dengan saldo TERBARU yang diambil ulang dari server sebelum
+  // memotong koin.
   // dengan saldo TERBARU yang diambil ulang dari server sebelum memotong koin.
   const handleRedeemReward = async (reward: Reward) => {
     if (!currentUser) {

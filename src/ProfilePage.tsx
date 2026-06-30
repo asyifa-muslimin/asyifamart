@@ -43,7 +43,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginEmail.trim() || !loginPassword) {
-      showToast('Harap isi email dan kata sandi.', 'warning');
+      showToast('Harap isi email/No. HP dan kata sandi.', 'warning');
       return;
     }
     await onLogin(loginEmail.trim(), loginPassword);
@@ -51,8 +51,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName.trim() || !regEmail.trim() || !regPassword || !regWa.trim() || !regAlamat.trim()) {
-      showToast('Harap isi semua kolom wajib!', 'warning');
+    if (
+      !regName.trim() ||
+      !regEmail.trim() ||
+      !regPassword ||
+      !regWa.trim() ||
+      !regAlamat.trim() ||
+      !regMaps.trim()
+    ) {
+      showToast('Harap isi semua kolom wajib, termasuk Titik Lokasi Google Maps!', 'warning');
       return;
     }
     if (regPassword.length < 6) {
@@ -176,13 +183,13 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       {authTab === 'login' ? (
         <form onSubmit={handleLoginSubmit} className="space-y-4">
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 mb-1">Email</label>
+            <label className="block text-[10px] font-bold text-slate-400 mb-1">Email atau No. WhatsApp</label>
             <input
-              type="email"
+              type="text"
               value={loginEmail}
               onChange={(e) => setLoginEmail(e.target.value)}
               required
-              placeholder="Contoh: user@asyifamart.com"
+              placeholder="Contoh: user@asyifamart.com atau 0812xxxx"
               className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-emerald-500 text-xs bg-slate-50 font-semibold"
             />
           </div>
@@ -288,6 +295,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 type="url"
                 value={regMaps}
                 onChange={(e) => setRegMaps(e.target.value)}
+                required
                 placeholder="https://maps.google.com/..."
                 className="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 font-semibold"
               />
