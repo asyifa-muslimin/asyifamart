@@ -677,7 +677,7 @@ export default function App() {
     setCurrentPage('home');
   };
 
-  const navigate = (page: typeof currentPage) => {
+  const navigate = (page: typeof currentPage, options?: { fromPopState?: boolean }) => {
     if (page === 'orders' && !currentUser) {
       navigate('profile');
       showToast('Silakan login terlebih dahulu untuk mengakses riwayat pesanan.', 'info');
@@ -693,10 +693,47 @@ export default function App() {
       showToast('Akses Panel Administrator ditolak.', 'error');
       return;
     }
+
+    // Catat perpindahan "halaman" ini ke riwayat browser (History API), supaya
+    // tombol Back fisik di HP (terutama saat dibuka sebagai PWA dari homescreen)
+    // mundur DI DALAM aplikasi dulu (mis. Detail Produk -> Beranda), bukan
+    // langsung keluar dari aplikasi. Tidak push state baru kalau navigasi ini
+    // sendiri dipicu oleh tombol Back (popstate) -- itu mencegah loop ganda.
+    if (!options?.fromPopState) {
+      window.history.pushState({ page }, '', '#' + page);
+    }
+
     setCurrentPage(page);
     setIsUserMenuOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // Tombol Back fisik HP / gesture Back saat aplikasi dibuka sebagai PWA dari
+  // homescreen akan memicu event 'popstate' kalau ada entri riwayat browser
+  // yang bisa dimundurkan (lihat pushState di navigate() di atas). Tanpa ini,
+  // PWA tidak punya riwayat internal sama sekali, sehingga tombol Back
+  // langsung keluar dari aplikasi walau pengguna sedang ada di halaman Detail/
+  // Keranjang/dll, bukan di Beranda.
+  useEffect(() => {
+    // Catat entri riwayat "dasar" untuk halaman saat ini begitu aplikasi
+    // dimuat, supaya ada sesuatu yang bisa di-pushState di atasnya nanti.
+    window.history.replaceState({ page: currentPage }, '', '#' + currentPage);
+
+    const handlePopState = (event: PopStateEvent) => {
+      const pageFromHistory = event.state?.page as typeof currentPage | undefined;
+      if (pageFromHistory) {
+        navigate(pageFromHistory, { fromPopState: true });
+      } else {
+        // Tidak ada state tersimpan (mis. riwayat sudah habis) -> anggap
+        // sebagai kembali ke Beranda, bukan biarkan halaman kosong.
+        setCurrentPage('home');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Toggle favorite on/off
   const handleToggleWishlist = async (e: React.MouseEvent, prodId: number) => {
