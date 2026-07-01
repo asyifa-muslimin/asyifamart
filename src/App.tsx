@@ -1486,6 +1486,7 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ğŸª
       const prod = variant ? products.find((p) => isVariantOfProduct(variant, p)) : null;
       return {
         id: item.id,
+        variant_id: item.variant_id,
         nama_produk: prod ? prod.nama_produk : 'Produk',
         nama_varian: variant ? variant.nama_varian : 'Varian',
         qty: item.qty,
@@ -1516,6 +1517,57 @@ ${currentUser && koinDiperoleh > 0 ? `Koin Diperoleh: +${koinDiperoleh} koin ğŸª
 
     if (error) throw error;
     return mapOrderItemRows(data || []);
+  };
+
+  // "Beli Lagi": ambil rincian item sebuah pesanan lama, lalu masukkan kembali
+  // ke keranjang. Varian yang sudah tidak tersedia (misalnya produk dihapus)
+  // dilewati agar tidak error, dan kuantitas digabung dengan yang sudah ada.
+  const handleBuyAgain = async (orderId: number) => {
+    try {
+      const items = await handleFetchOrderItemsForDisplay(orderId);
+      if (!items || items.length === 0) {
+        showToast('Rincian produk pesanan ini tidak tersedia.', 'warning');
+        return;
+      }
+
+      const updated = [...cart];
+      let addedCount = 0;
+      let skippedCount = 0;
+
+      items.forEach((item) => {
+        const variantId = item.variant_id;
+        const variant = variantId ? variants.find((v) => v.id === variantId) : undefined;
+        if (!variantId || !variant) {
+          skippedCount += 1;
+          return;
+        }
+        const existsIdx = updated.findIndex((c) => c.variant_id === variantId);
+        if (existsIdx !== -1) {
+          updated[existsIdx] = { ...updated[existsIdx], qty: updated[existsIdx].qty + item.qty };
+        } else {
+          updated.push({ variant_id: variantId, qty: item.qty });
+        }
+        addedCount += 1;
+      });
+
+      if (addedCount === 0) {
+        showToast('Produk pada pesanan ini sudah tidak tersedia lagi.', 'warning');
+        return;
+      }
+
+      setCart(updated);
+      localStorage.setItem('asyifa_cart', JSON.stringify(updated));
+      showToast(
+        skippedCount > 0
+          ? `${addedCount} produk ditambahkan, ${skippedCount} produk sudah tidak tersedia.`
+          : 'Produk pesanan berhasil ditambahkan ke keranjang!',
+        'success'
+      );
+      setCurrentPage('cart');
+    } catch (err) {
+      console.error('Gagal memproses beli lagi:', err);
+      showToast('Gagal menambahkan produk ke keranjang.', 'error');
+    }
   };
 
   const autoPrintIncomingOrder = async (newOrderRow: Order) => {
@@ -2502,6 +2554,7 @@ self.addEventListener('fetch', event => {
               <OrderHistory
                 orders={orders}
                 onFetchOrderItems={handleFetchOrderItemsForDisplay}
+                onBuyAgain={handleBuyAgain}
                 onPrintReceipt={async (orderId) => {
                   const order = orders.find((o) => o.id === orderId);
                   if (!order) return;

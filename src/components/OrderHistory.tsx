@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Receipt, Printer, ExternalLink, ChevronDown, PackageSearch } from 'lucide-react';
+import { Receipt, Printer, ExternalLink, ChevronDown, PackageSearch, RotateCcw, Loader2 } from 'lucide-react';
 import { Order } from '../types';
 
 interface OrderHistoryProps {
   orders: Order[];
   onPrintReceipt: (orderId: number) => void;
   onFetchOrderItems: (orderId: number) => Promise<NonNullable<Order['items']>>;
+  onBuyAgain: (orderId: number) => Promise<void>;
   notificationPermission: NotificationPermission;
   onRequestNotificationPermission: () => Promise<boolean>;
 }
@@ -14,9 +15,23 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
   orders,
   onPrintReceipt,
   onFetchOrderItems,
+  onBuyAgain,
   notificationPermission,
   onRequestNotificationPermission,
 }) => {
+  // Pesanan mana yang sedang diproses "Beli Lagi" (biar tombolnya bisa disabled).
+  const [buyingAgainOrderId, setBuyingAgainOrderId] = useState<number | null>(null);
+
+  const handleBuyAgainClick = async (orderId: number) => {
+    if (buyingAgainOrderId !== null) return;
+    setBuyingAgainOrderId(orderId);
+    try {
+      await onBuyAgain(orderId);
+    } finally {
+      setBuyingAgainOrderId(null);
+    }
+  };
+
   // Kartu pesanan mana yang sedang di-expand (cuma 1 pada satu waktu).
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
   // Cache rincian item per orderId supaya tidak fetch ulang tiap kali expand-collapse-expand.
@@ -273,6 +288,24 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Tombol Beli Lagi: masukkan kembali semua produk pesanan ini ke keranjang */}
+            <button
+              type="button"
+              onClick={() => handleBuyAgainClick(order.id)}
+              disabled={buyingAgainOrderId === order.id}
+              className="w-full flex items-center justify-center gap-1.5 text-[11px] font-black text-white bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed px-4 py-2.5 rounded-2xl transition duration-150 shadow-md shadow-emerald-500/15 mt-1"
+            >
+              {buyingAgainOrderId === order.id ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Menambahkan...
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="w-3.5 h-3.5" /> Beli Lagi
+                </>
+              )}
+            </button>
           </div>
         );
       })}

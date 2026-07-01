@@ -94,6 +94,7 @@ export interface Order {
   created_at?: string;
   items?: Array<{
     id?: number;
+    variant_id?: number;
     nama_produk: string;
     nama_varian: string;
     qty: number;
