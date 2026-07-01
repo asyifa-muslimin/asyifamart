@@ -4,7 +4,7 @@ const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/icon-512.jpg'
+  '/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -86,19 +86,19 @@ self.addEventListener('fetch', (event) => {
 
 // Handle real Web Push notifications from a server
 self.addEventListener('push', (event) => {
-  let data = { title: 'Asyifa Mart', body: 'Ada perubahan status pesanan Anda!' };
+  let data = { title: 'ASYIFA MART', body: 'Ada perubahan status pesanan Anda!' };
   if (event.data) {
     try {
       data = event.data.json();
     } catch (e) {
-      data = { title: 'Asyifa Mart', body: event.data.text() };
+      data = { title: 'ASYIFA MART', body: event.data.text() };
     }
   }
 
   const options = {
     body: data.body,
-    icon: data.icon || '/icon-512.jpg',
-    badge: data.badge || '/icon-512.jpg',
+    icon: data.icon || '/icon-512.png',
+    badge: data.badge || '/icon-512.png',
     vibrate: [100, 50, 100],
     data: {
       url: data.url || '/'
@@ -116,8 +116,8 @@ self.addEventListener('message', (event) => {
     const { title, body, icon, tag } = event.data;
     const options = {
       body: body,
-      icon: icon || '/icon-512.jpg',
-      badge: icon || '/icon-512.jpg',
+      icon: icon || '/icon-512.png',
+      badge: icon || '/icon-512.png',
       vibrate: [100, 50, 100],
       tag: tag || 'order-status-update',
       renotify: true,
