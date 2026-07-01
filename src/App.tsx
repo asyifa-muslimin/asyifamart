@@ -88,6 +88,9 @@ export default function App() {
   const [promos, setPromos] = useState<Promo[]>(defaultPromos);
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [redemptions, setRedemptions] = useState<RewardRedemption[]>([]);
+
+  // Promo Banner Slider State
+  const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrderForPrint, setSelectedOrderForPrint] = useState<Order | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -331,6 +334,18 @@ export default function App() {
   useEffect(() => {
     syncData();
   }, [useLocalEmulation, isOnline]);
+
+  // Auto-slide banner promosi setiap 4 detik (hanya jalan kalau banner > 1)
+  useEffect(() => {
+    if (banners.length <= 1) {
+      setCurrentBannerIndex(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setCurrentBannerIndex((prev) => (prev + 1) % banners.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [banners.length]);
 
   // Load orders when user changes or DB mode changes
   useEffect(() => {
@@ -2207,38 +2222,64 @@ self.addEventListener('fetch', event => {
             >
               {/* Promo Banners */}
               {banners.length > 0 && (
-                <div
-                  onClick={() => {
-                    if (banners[0].link) {
-                      const linkedProductId = parseInt(banners[0].link, 10);
-                      const productExists = products.some((p) => getProductId(p) === linkedProductId);
-                      if (productExists) {
-                        setActiveDetailProductId(linkedProductId);
-                        navigate('detail');
-                      } else {
-                        showToast('Produk pada banner ini sudah tidak tersedia.', 'warning');
-                      }
-                    }
-                  }}
-                  className={`relative bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-3xl overflow-hidden shadow-xl min-h-[160px] md:min-h-[280px] ${
-                    banners[0].link ? 'cursor-pointer active:scale-[0.99] transition' : ''
-                  }`}
-                >
-                  <div className="absolute inset-0 flex bg-cover bg-center" style={{ backgroundImage: `url(${banners[0].gambar})` }}>
-                    <div className="absolute inset-0 bg-black/40 flex items-end p-6 md:p-12 text-white">
-                      <div>
-                        <span className="bg-red-500 text-white font-extrabold text-[8px] uppercase tracking-wider px-2 py-0.5 rounded-md mb-2 inline-block">
-                          Promo Spesial
-                        </span>
-                        <h4 className="text-sm md:text-2xl font-black leading-tight tracking-tight max-w-lg">
-                          {banners[0].judul}
-                        </h4>
-                        <p className="text-[10px] md:text-sm text-slate-200 mt-1">
-                          {banners[0].link ? 'Ketuk untuk lihat produk promo ini' : 'Layanan cepat pesan langsung via kurir WhatsApp harian.'}
-                        </p>
+                <div className="relative rounded-3xl overflow-hidden shadow-xl min-h-[160px] md:min-h-[280px] bg-gradient-to-r from-emerald-500 to-emerald-600">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={banners[currentBannerIndex].id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.5 }}
+                      onClick={() => {
+                        const activeBanner = banners[currentBannerIndex];
+                        if (activeBanner.link) {
+                          const linkedProductId = parseInt(activeBanner.link, 10);
+                          const productExists = products.some((p) => getProductId(p) === linkedProductId);
+                          if (productExists) {
+                            setActiveDetailProductId(linkedProductId);
+                            navigate('detail');
+                          } else {
+                            showToast('Produk pada banner ini sudah tidak tersedia.', 'warning');
+                          }
+                        }
+                      }}
+                      className={`absolute inset-0 flex bg-cover bg-center ${
+                        banners[currentBannerIndex].link ? 'cursor-pointer active:scale-[0.99] transition' : ''
+                      }`}
+                      style={{ backgroundImage: `url(${banners[currentBannerIndex].gambar})` }}
+                    >
+                      <div className="absolute inset-0 bg-black/40 flex items-end p-6 md:p-12 text-white">
+                        <div>
+                          <span className="bg-red-500 text-white font-extrabold text-[8px] uppercase tracking-wider px-2 py-0.5 rounded-md mb-2 inline-block">
+                            Promo Spesial
+                          </span>
+                          <h4 className="text-sm md:text-2xl font-black leading-tight tracking-tight max-w-lg">
+                            {banners[currentBannerIndex].judul}
+                          </h4>
+                          <p className="text-[10px] md:text-sm text-slate-200 mt-1">
+                            {banners[currentBannerIndex].link ? 'Ketuk untuk lihat produk promo ini' : 'Layanan cepat pesan langsung via kurir WhatsApp harian.'}
+                          </p>
+                        </div>
                       </div>
+                    </motion.div>
+                  </AnimatePresence>
+
+                  {/* Dot Indicators */}
+                  {banners.length > 1 && (
+                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 z-10">
+                      {banners.map((b, idx) => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => setCurrentBannerIndex(idx)}
+                          className={`h-1.5 rounded-full transition-all ${
+                            idx === currentBannerIndex ? 'w-5 bg-white' : 'w-1.5 bg-white/50'
+                          }`}
+                          aria-label={`Banner ${idx + 1}`}
+                        />
+                      ))}
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
 
