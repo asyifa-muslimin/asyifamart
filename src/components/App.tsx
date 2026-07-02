@@ -235,6 +235,34 @@ export default function App() {
   }, [originalModePreference]);
 
   // Request notification permission and trigger a test notification
+  // VAPID public key — harus sama dengan yang di-set di Supabase Edge Function
+  const VAPID_PUBLIC_KEY = 'BGwBcAJVQcqT5L39MYBt-2rNjlqMiXjbVwPFDYk1R_m-9FxDn4Qu46k7kXIRSFatgYkslt9u8FKigceGF-zCtc4';
+
+  const urlBase64ToUint8Array = (base64String: string): Uint8Array => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+  };
+
+  const savePushSubscriptionToSupabase = async (subscription: PushSubscription) => {
+    if (!currentUser) return;
+    const json = subscription.toJSON();
+    const { endpoint, keys } = json;
+    if (!endpoint || !keys?.p256dh || !keys?.auth) return;
+
+    // Upsert — kalau endpoint sudah ada, tidak duplikat
+    await supabase.from('push_subscriptions').upsert(
+      {
+        user_id: currentUser.id,
+        endpoint,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+      },
+      { onConflict: 'endpoint' }
+    );
+  };
+
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
       showToast('Browser Anda tidak mendukung push notification.', 'error');
@@ -243,12 +271,33 @@ export default function App() {
     try {
       const permission = await Notification.requestPermission();
       setNotificationPermission(permission);
+
       if (permission === 'granted') {
-        showToast('Notifikasi status pesanan berhasil diaktifkan!', 'success');
-        triggerPushNotification(
-          'Notifikasi Aktif 🔔',
-          'Anda akan menerima pemberitahuan setiap kali status pesanan Anda berubah.'
-        );
+        // Coba subscribe Web Push sungguhan
+        if ('serviceWorker' in navigator && 'PushManager' in window) {
+          try {
+            const reg = await navigator.serviceWorker.ready;
+            const sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+            });
+            await savePushSubscriptionToSupabase(sub);
+            showToast('Notifikasi push berhasil diaktifkan! 🔔', 'success');
+          } catch (pushErr) {
+            console.warn('Web Push subscribe gagal, fallback ke notif lokal:', pushErr);
+            showToast('Notifikasi lokal diaktifkan (push server tidak tersedia).', 'info');
+            triggerPushNotification(
+              'Notifikasi Aktif 🔔',
+              'Anda akan menerima pemberitahuan saat status pesanan berubah.'
+            );
+          }
+        } else {
+          showToast('Notifikasi berhasil diaktifkan!', 'success');
+          triggerPushNotification(
+            'Notifikasi Aktif 🔔',
+            'Anda akan menerima pemberitahuan saat status pesanan berubah.'
+          );
+        }
         return true;
       } else {
         showToast('Izin notifikasi ditolak. Silakan aktifkan melalui pengaturan browser.', 'warning');
@@ -2322,26 +2371,36 @@ self.addEventListener('fetch', event => {
                 <h2 className="text-sm md:text-base font-extrabold text-slate-800 tracking-tight flex items-center gap-1.5 mb-3">
                   <LayoutGrid className="w-4 h-4 text-emerald-600" /> Kategori Belanja
                 </h2>
-                <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
-                  {categories.map((cat) => (
-                    <div
-                      key={cat.id}
-                      onClick={() => {
-                        setActiveCategoryFilter(cat.id);
-                        window.scrollTo({ top: 400, behavior: 'smooth' });
-                      }}
-                      className={`bg-white border rounded-xl p-2.5 flex flex-col items-center justify-center text-center cursor-pointer transition duration-150 ${
-                        activeCategoryFilter === cat.id
-                          ? 'border-emerald-500 bg-emerald-50/30 shadow-md shadow-emerald-500/5'
-                          : 'border-slate-100 hover:border-emerald-500'
-                      }`}
-                    >
-                      <span className="text-base md:text-xl mb-1">{cat.icon || '📦'}</span>
-                      <span className="text-[9px] font-bold text-slate-700 truncate w-full tracking-tight">
-                        {cat.nama_kategori}
-                      </span>
-                    </div>
-                  ))}
+                <div className="overflow-x-auto pb-1 -mx-1 px-1" style={{ scrollbarWidth: 'none' }}>
+                  <div
+                    className="grid gap-2"
+                    style={{
+                      gridTemplateRows: 'repeat(3, auto)',
+                      gridAutoFlow: 'column',
+                      gridAutoColumns: '72px',
+                      width: 'max-content',
+                    }}
+                  >
+                    {categories.map((cat) => (
+                      <div
+                        key={cat.id}
+                        onClick={() => {
+                          setActiveCategoryFilter(cat.id);
+                          window.scrollTo({ top: 400, behavior: 'smooth' });
+                        }}
+                        className={`bg-white border rounded-xl p-2 flex flex-col items-center justify-center text-center cursor-pointer transition duration-150 ${
+                          activeCategoryFilter === cat.id
+                            ? 'border-emerald-500 bg-emerald-50/30 shadow-md shadow-emerald-500/5'
+                            : 'border-slate-100 hover:border-emerald-500'
+                        }`}
+                      >
+                        <span className="text-lg mb-0.5">{cat.icon || '📦'}</span>
+                        <span className="text-[9px] font-bold text-slate-700 leading-tight tracking-tight w-full text-center line-clamp-2">
+                          {cat.nama_kategori}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
