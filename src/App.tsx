@@ -2322,26 +2322,36 @@ self.addEventListener('fetch', event => {
                 <h2 className="text-sm md:text-base font-extrabold text-slate-800 tracking-tight flex items-center gap-1.5 mb-3">
                   <LayoutGrid className="w-4 h-4 text-emerald-600" /> Kategori Belanja
                 </h2>
-                <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
-                  {categories.map((cat) => (
-                    <div
-                      key={cat.id}
-                      onClick={() => {
-                        setActiveCategoryFilter(cat.id);
-                        window.scrollTo({ top: 400, behavior: 'smooth' });
-                      }}
-                      className={`bg-white border rounded-xl p-2.5 flex flex-col items-center justify-center text-center cursor-pointer transition duration-150 ${
-                        activeCategoryFilter === cat.id
-                          ? 'border-emerald-500 bg-emerald-50/30 shadow-md shadow-emerald-500/5'
-                          : 'border-slate-100 hover:border-emerald-500'
-                      }`}
-                    >
-                      <span className="text-base md:text-xl mb-1">{cat.icon || '📦'}</span>
-                      <span className="text-[9px] font-bold text-slate-700 truncate w-full tracking-tight">
-                        {cat.nama_kategori}
-                      </span>
-                    </div>
-                  ))}
+                <div className="overflow-x-auto pb-1 -mx-1 px-1" style={{ scrollbarWidth: 'none' }}>
+                  <div
+                    className="grid gap-2"
+                    style={{
+                      gridTemplateRows: 'repeat(3, auto)',
+                      gridAutoFlow: 'column',
+                      gridAutoColumns: '72px',
+                      width: 'max-content',
+                    }}
+                  >
+                    {categories.map((cat) => (
+                      <div
+                        key={cat.id}
+                        onClick={() => {
+                          setActiveCategoryFilter(cat.id);
+                          window.scrollTo({ top: 400, behavior: 'smooth' });
+                        }}
+                        className={`bg-white border rounded-xl p-2 flex flex-col items-center justify-center text-center cursor-pointer transition duration-150 ${
+                          activeCategoryFilter === cat.id
+                            ? 'border-emerald-500 bg-emerald-50/30 shadow-md shadow-emerald-500/5'
+                            : 'border-slate-100 hover:border-emerald-500'
+                        }`}
+                      >
+                        <span className="text-lg mb-0.5">{cat.icon || '📦'}</span>
+                        <span className="text-[9px] font-bold text-slate-700 leading-tight tracking-tight w-full text-center line-clamp-2">
+                          {cat.nama_kategori}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
