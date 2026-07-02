@@ -661,6 +661,100 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     showToast('Berhasil dicetak!', 'success');
   };
 
+  // Kirim bytes ESC/POS langsung ke printer Bluetooth (untuk HP/tablet)
+  const printEscPosOverBluetooth = async (bytes: Uint8Array) => {
+    let activeChar = bluetoothCharacteristic;
+    let activeDevice = bluetoothDevice;
+
+    if (!activeChar || !activeDevice || activeDevice.gatt?.connected === false) {
+      if (!('bluetooth' in navigator)) {
+        throw new Error('Browser Anda tidak mendukung Web Bluetooth. Gunakan Google Chrome di Android.');
+      }
+
+      showToast('Mencari printer Bluetooth...', 'info');
+      const device = await (navigator as any).bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [
+          '000018f0-0000-1000-8000-00805f9b34fb',
+          '0000ffe0-0000-1000-8000-00805f9b34fb',
+          '0000ffe1-0000-1000-8000-00805f9b34fb',
+          '00001101-0000-1000-8000-00805f9b34fb',
+          '0000ff00-0000-1000-8000-00805f9b34fb',
+        ],
+      });
+
+      if (!device) throw new Error('Koneksi dibatalkan.');
+
+      showToast(`Menghubungkan ke ${device.name || 'Printer'}...`, 'info');
+      const server = await device.gatt.connect();
+      const services = await server.getPrimaryServices();
+
+      for (const service of services) {
+        const chars = await service.getCharacteristics();
+        for (const char of chars) {
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            activeChar = char;
+            break;
+          }
+        }
+        if (activeChar) break;
+      }
+
+      if (!activeChar) throw new Error('Tidak menemukan karakteristik tulis pada printer. Pastikan printer ESC/POS Bluetooth Anda kompatibel.');
+
+      setBluetoothDevice(device);
+      setBluetoothCharacteristic(activeChar);
+
+      device.addEventListener('gattserverdisconnected', () => {
+        setBluetoothDevice(null);
+        setBluetoothCharacteristic(null);
+        showToast('Koneksi printer Bluetooth terputus.', 'warning');
+      });
+
+      showToast(`Terhubung ke ${device.name || 'Printer Bluetooth'}!`, 'success');
+    }
+
+    showToast('Mengirim struk ke printer...', 'info');
+
+    // Kirim dalam chunk 512 byte agar tidak overflow buffer BLE
+    const chunkSize = 512;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.slice(i, i + chunkSize);
+      if (activeChar.properties.writeWithoutResponse) {
+        await activeChar.writeValueWithoutResponse(chunk);
+      } else {
+        await activeChar.writeValue(chunk);
+      }
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
+    showToast('Struk berhasil dicetak via Bluetooth! 🖨️', 'success');
+  };
+
+  const [isPrintingBluetooth, setIsPrintingBluetooth] = useState(false);
+
+  const handlePrintBluetoothOrder = async () => {
+    if (!selectedOrderForPrint) return;
+    setIsPrintingBluetooth(true);
+    try {
+      const bytes = buildReceiptEscPos(selectedOrderForPrint, {
+        ...storeSettings,
+        struk_lebar: strukLebar,
+        struk_header: strukHeader,
+        struk_footer: strukFooter,
+        struk_show_alamat: strukShowAlamat,
+        struk_show_kontak: strukShowKontak,
+        struk_show_waktu: strukShowWaktu,
+      });
+      await printEscPosOverBluetooth(bytes);
+    } catch (err: any) {
+      console.error('Bluetooth print error:', err);
+      showToast(`Gagal cetak Bluetooth: ${err.message || 'Periksa koneksi printer.'}`, 'error');
+    } finally {
+      setIsPrintingBluetooth(false);
+    }
+  };
+
   const generateReceiptText = (order: Order): string => {
     if (!order.items) return "";
     
@@ -3404,6 +3498,23 @@ Aturan Penulisan:
                 >
                   <Printer className="w-4 h-4" />
                   <span>{printerThermalNama ? 'Cetak ke Printer Thermal' : 'Cetak Struk POS'}</span>
+                </button>
+
+                {/* Tombol Cetak via Bluetooth (HP/Tablet) */}
+                <button
+                  type="button"
+                  onClick={handlePrintBluetoothOrder}
+                  disabled={isPrintingBluetooth}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold text-xs py-3 rounded-2xl transition shadow-md flex items-center justify-center gap-2 uppercase tracking-wider"
+                >
+                  <Bluetooth className="w-4 h-4" />
+                  <span>
+                    {isPrintingBluetooth
+                      ? 'Mengirim ke Printer...'
+                      : bluetoothDevice
+                      ? `Cetak BT (${bluetoothDevice.name || 'Terhubung'})`
+                      : 'Cetak via Bluetooth (HP)'}
+                  </span>
                 </button>
 
                 <button
