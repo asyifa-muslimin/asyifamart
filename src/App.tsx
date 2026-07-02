@@ -235,6 +235,34 @@ export default function App() {
   }, [originalModePreference]);
 
   // Request notification permission and trigger a test notification
+  // VAPID public key — harus sama dengan yang di-set di Supabase Edge Function
+  const VAPID_PUBLIC_KEY = 'BGwBcAJVQcqT5L39MYBt-2rNjlqMiXjbVwPFDYk1R_m-9FxDn4Qu46k7kXIRSFatgYkslt9u8FKigceGF-zCtc4';
+
+  const urlBase64ToUint8Array = (base64String: string): Uint8Array => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+  };
+
+  const savePushSubscriptionToSupabase = async (subscription: PushSubscription) => {
+    if (!currentUser) return;
+    const json = subscription.toJSON();
+    const { endpoint, keys } = json;
+    if (!endpoint || !keys?.p256dh || !keys?.auth) return;
+
+    // Upsert — kalau endpoint sudah ada, tidak duplikat
+    await supabase.from('push_subscriptions').upsert(
+      {
+        user_id: currentUser.id,
+        endpoint,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+      },
+      { onConflict: 'endpoint' }
+    );
+  };
+
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
       showToast('Browser Anda tidak mendukung push notification.', 'error');
@@ -243,12 +271,33 @@ export default function App() {
     try {
       const permission = await Notification.requestPermission();
       setNotificationPermission(permission);
+
       if (permission === 'granted') {
-        showToast('Notifikasi status pesanan berhasil diaktifkan!', 'success');
-        triggerPushNotification(
-          'Notifikasi Aktif 🔔',
-          'Anda akan menerima pemberitahuan setiap kali status pesanan Anda berubah.'
-        );
+        // Coba subscribe Web Push sungguhan
+        if ('serviceWorker' in navigator && 'PushManager' in window) {
+          try {
+            const reg = await navigator.serviceWorker.ready;
+            const sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+            });
+            await savePushSubscriptionToSupabase(sub);
+            showToast('Notifikasi push berhasil diaktifkan! 🔔', 'success');
+          } catch (pushErr) {
+            console.warn('Web Push subscribe gagal, fallback ke notif lokal:', pushErr);
+            showToast('Notifikasi lokal diaktifkan (push server tidak tersedia).', 'info');
+            triggerPushNotification(
+              'Notifikasi Aktif 🔔',
+              'Anda akan menerima pemberitahuan saat status pesanan berubah.'
+            );
+          }
+        } else {
+          showToast('Notifikasi berhasil diaktifkan!', 'success');
+          triggerPushNotification(
+            'Notifikasi Aktif 🔔',
+            'Anda akan menerima pemberitahuan saat status pesanan berubah.'
+          );
+        }
         return true;
       } else {
         showToast('Izin notifikasi ditolak. Silakan aktifkan melalui pengaturan browser.', 'warning');
