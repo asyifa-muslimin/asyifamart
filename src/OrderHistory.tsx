@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Receipt, Printer, ExternalLink, ChevronDown, PackageSearch } from 'lucide-react';
+import { Receipt, Printer, ExternalLink, ChevronDown, PackageSearch, ShoppingCart } from 'lucide-react';
 import { Order } from '../types';
 
 interface OrderHistoryProps {
   orders: Order[];
   onPrintReceipt: (orderId: number) => void;
   onFetchOrderItems: (orderId: number) => Promise<NonNullable<Order['items']>>;
+  onReorder: (items: NonNullable<Order['items']>) => void;
   notificationPermission: NotificationPermission;
   onRequestNotificationPermission: () => Promise<boolean>;
 }
@@ -14,6 +15,7 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
   orders,
   onPrintReceipt,
   onFetchOrderItems,
+  onReorder,
   notificationPermission,
   onRequestNotificationPermission,
 }) => {
@@ -23,6 +25,7 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
   const [itemsCache, setItemsCache] = useState<Record<number, NonNullable<Order['items']>>>({});
   const [loadingItemsOrderId, setLoadingItemsOrderId] = useState<number | null>(null);
   const [itemsErrorOrderId, setItemsErrorOrderId] = useState<number | null>(null);
+  const [reorderingOrderId, setReorderingOrderId] = useState<number | null>(null);
 
   const handleToggleExpand = async (orderId: number) => {
     if (expandedOrderId === orderId) {
@@ -45,6 +48,22 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
       setItemsErrorOrderId(orderId);
     } finally {
       setLoadingItemsOrderId(null);
+    }
+  };
+
+  const handleReorder = async (order: Order) => {
+    setReorderingOrderId(order.id);
+    try {
+      let items = itemsCache[order.id];
+      if (!items) {
+        items = await onFetchOrderItems(order.id);
+        setItemsCache((prev) => ({ ...prev, [order.id]: items }));
+      }
+      onReorder(items);
+    } catch (err) {
+      console.error('Gagal memuat item untuk beli lagi:', err);
+    } finally {
+      setReorderingOrderId(null);
     }
   };
 
@@ -176,6 +195,7 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
         const items = itemsCache[order.id];
         const isLoadingItems = loadingItemsOrderId === order.id;
         const hasItemsError = itemsErrorOrderId === order.id;
+        const isReordering = reorderingOrderId === order.id;
 
         return (
           <div key={order.id} className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs space-y-3">
@@ -272,6 +292,17 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
                   )}
                 </div>
               )}
+
+              {/* Tombol Beli Lagi */}
+              <button
+                type="button"
+                onClick={() => handleReorder(order)}
+                disabled={isReordering}
+                className="w-full mt-1 flex items-center justify-center gap-1.5 text-[11px] font-black text-emerald-700 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 border border-emerald-200 px-4 py-2.5 rounded-2xl transition disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <ShoppingCart className="w-3.5 h-3.5" />
+                {isReordering ? 'Menambahkan...' : 'Beli Lagi'}
+              </button>
             </div>
           </div>
         );
