@@ -821,6 +821,40 @@ export default function App() {
     showToast('Item dihapus dari keranjang.', 'warning');
   };
 
+  const handleReorder = async (items: NonNullable<Order['items']>) => {
+    // Cari variant_id dari nama_produk + nama_varian di state variants+products
+    let addedCount = 0;
+    const newCart = [...JSON.parse(localStorage.getItem('asyifa_cart') || '[]')];
+
+    for (const item of items) {
+      // Cari variant yang cocok nama_variannya dan produk yang cocok nama_produknya
+      const matchedVariant = variants.find((v) => {
+        const prod = products.find((p) => isVariantOfProduct(v, p));
+        return prod?.nama_produk === item.nama_produk && v.nama_varian === item.nama_varian;
+      });
+
+      if (!matchedVariant) continue;
+
+      const existsIdx = newCart.findIndex((c: CartItem) => c.variant_id === matchedVariant.id);
+      if (existsIdx !== -1) {
+        newCart[existsIdx].qty += item.qty;
+      } else {
+        newCart.push({ variant_id: matchedVariant.id, qty: item.qty });
+      }
+      addedCount++;
+    }
+
+    if (addedCount === 0) {
+      showToast('Produk tidak ditemukan atau sudah tidak tersedia.', 'error');
+      return;
+    }
+
+    setCart(newCart);
+    localStorage.setItem('asyifa_cart', JSON.stringify(newCart));
+    showToast(`${addedCount} produk berhasil ditambahkan ke keranjang! 🛒`, 'success');
+    setCurrentPage('cart');
+  };
+
   const handleCheckoutSubmit = async (checkoutData: {
     nama: string;
     wa: string;
@@ -2550,6 +2584,7 @@ self.addEventListener('fetch', event => {
                     showToast('Berhasil membuka layar cetak struk!', 'success');
                   }, 300);
                 }}
+                onReorder={handleReorder}
                 notificationPermission={notificationPermission}
                 onRequestNotificationPermission={requestNotificationPermission}
               />
