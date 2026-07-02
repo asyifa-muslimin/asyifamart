@@ -135,15 +135,23 @@ self.addEventListener('message', (event) => {
 // Handle clicking on notifications
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url)
+    ? event.notification.data.url
+    : '/';
+
   event.waitUntil(
-    clients.matchAll({ type: 'window' }).then((clientList) => {
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // Kalau sudah ada tab yang buka app, fokus dan navigasi ke URL tujuan
       for (const client of clientList) {
         if (client.url.includes(location.origin) && 'focus' in client) {
-          return client.focus();
+          client.focus();
+          if ('navigate' in client) client.navigate(targetUrl);
+          return;
         }
       }
+      // Belum ada tab, buka window baru
       if (clients.openWindow) {
-        return clients.openWindow('/');
+        return clients.openWindow(targetUrl);
       }
     })
   );
